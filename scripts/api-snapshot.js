@@ -64,7 +64,8 @@ const UNTRACKED_MARKER = "signature not tracked";
  * `agent`, `ai`, `container` and `platform-node` ARE covered, at TIER_3, and
  * being covered is NOT a stability promise — see {@link TIER_3}. The rest of the
  * experimental tier (`replica`, `x402`, `react-native`, `angular`, `browser`,
- * `payment`) is not covered yet.
+ * `payment`) is not covered yet. `platform-celld` is likewise not covered: it is
+ * a spike blocked as a runnable target on celld's planned `storage.sql` surface.
  *
  * `platform-node` was held out entirely while it was a plan-234 spike, on the
  * grounds that its surface was still expected to move. It now implements what it

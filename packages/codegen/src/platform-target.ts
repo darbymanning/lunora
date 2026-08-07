@@ -19,9 +19,10 @@
  * `native` and `emulated` both emit as-is — `emulated` means Lunora builds the
  * feature on lower-level primitives, which is still a working surface.
  *
- * Cloudflare and Node are registered (their matrices live in `@lunora/platform`
- * as `CLOUDFLARE_CAPABILITIES` / `NODE_CAPABILITIES`); other hosts register
- * their matrices as their per-target `@lunora/platform-<target>` packages land.
+ * Cloudflare, Node, and celld are registered (their matrices live in
+ * `@lunora/platform` as `CLOUDFLARE_CAPABILITIES` / `NODE_CAPABILITIES` /
+ * `CELLD_CAPABILITIES`); other hosts register their matrices as their
+ * per-target `@lunora/platform-<target>` packages land.
  * An unregistered `target` is a configuration error, reported as
  * `platform_unknown_target` — and, crucially, the usage set is left untouched
  * so codegen never silently omits a surface against a matrix it does not have.
@@ -45,7 +46,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { PlatformCapabilities } from "@lunora/platform";
-import { CLOUDFLARE_CAPABILITIES, NODE_CAPABILITIES } from "@lunora/platform";
+import { CELLD_CAPABILITIES, CLOUDFLARE_CAPABILITIES, NODE_CAPABILITIES } from "@lunora/platform";
 import type { ParseError } from "jsonc-parser";
 import { parse as parseJsonc } from "jsonc-parser";
 
@@ -120,10 +121,11 @@ const resolveCodegenTarget = (projectRoot: string, explicit?: string): string =>
 /**
  * The capability matrices codegen can gate against, keyed by target id. One
  * entry per host package that ships a `PlatformCapabilities` — Cloudflare
- * (deployable) and, per plan 234, Node (a spike host with no deploy story; see
- * `@lunora/platform-node`).
+ * (deployable), plus two spike hosts with no deploy story: Node (plan 234;
+ * see `@lunora/platform-node`) and celld (see `@lunora/platform-celld`).
  */
 const PLATFORM_MATRICES: Readonly<Record<string, PlatformCapabilities>> = {
+    celld: CELLD_CAPABILITIES,
     cloudflare: CLOUDFLARE_CAPABILITIES,
     node: NODE_CAPABILITIES,
 };
