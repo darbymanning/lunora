@@ -3929,6 +3929,40 @@ importers:
         specifier: catalog:test
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(@vitest/ui@4.1.10)(happy-dom@20.11.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@7.3.5(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.48.0)(yaml@2.9.0))
 
+  packages/platform-celld:
+    dependencies:
+      '@lunora/platform':
+        specifier: workspace:*
+        version: link:../platform
+      '@lunora/platform-cloudflare':
+        specifier: 1.0.0-alpha.19
+        version: 1.0.0-alpha.19
+    devDependencies:
+      '@codspeed/vitest-plugin':
+        specifier: catalog:test
+        version: 5.7.1(supports-color@10.2.2)(tinybench@2.9.0)(vite@7.3.5(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.48.0)(yaml@2.9.0))(vitest@4.1.10)
+      '@types/node':
+        specifier: catalog:types
+        version: 26.2.0
+      '@visulima/packem':
+        specifier: catalog:build
+        version: 2.0.0(c028d0da978b2a0f6fb384d2d32f858c)
+      '@vitest/coverage-v8':
+        specifier: catalog:test
+        version: 4.1.10(vitest@4.1.10)
+      esbuild:
+        specifier: catalog:build
+        version: 0.28.2
+      fallow:
+        specifier: catalog:lint
+        version: 3.14.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: catalog:test
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(@vitest/ui@4.1.10)(happy-dom@20.11.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@7.3.5(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.48.0)(yaml@2.9.0))
+
   packages/platform-cloudflare:
     dependencies:
       '@lunora/errors':
@@ -8277,6 +8311,10 @@ packages:
   '@lingui/message-utils@6.6.0':
     resolution: {integrity: sha512-XkEcuMjIUjq7KZfTe83jP6UWQvKskpae/Ve7E8M8HEJ3TujHIPLzKn/quEmot6pKRtGwYxQzktGRfs2sPcZaqg==}
     engines: {node: '>=22.19.0'}
+
+  '@lunora/platform-cloudflare@1.0.0-alpha.19':
+    resolution: {integrity: sha512-kMwTbJhZVlz7+kc34hH1tIBgFpdSqTxiD0x8k9cKt1j1rDDwNqVGZT/6yP5mYYEV8hwT/JHHdN3vV6gRa/+UlA==}
+    engines: {node: ^22.15.0 || >=24.11.0}
 
   '@lydell/node-pty-darwin-arm64@1.2.0-beta.12':
     resolution: {integrity: sha512-tqaifcY9Cr41SblO1+FLzh8oxxtkNhuW9Dhl22lKme9BreYvKvxEZcdPIXTuqkJc5tagOEC4QHShKmJjLyLXLQ==}
@@ -27801,6 +27839,11 @@ snapshots:
       '@messageformat/date-skeleton': 1.1.0
       '@messageformat/parser': 5.1.1
       js-sha256: 0.10.1
+
+  '@lunora/platform-cloudflare@1.0.0-alpha.19':
+    dependencies:
+      '@lunora/errors': link:packages/errors
+      '@lunora/platform': link:packages/platform
 
   '@lydell/node-pty-darwin-arm64@1.2.0-beta.12':
     optional: true
