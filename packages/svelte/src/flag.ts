@@ -1,9 +1,9 @@
 import type { FunctionReference, LunoraClient, Unsubscribe } from "@lunora/client";
-import type { Readable } from "svelte/store";
-import { readable } from "svelte/store";
 
 import { isClient } from "./agent";
 import { getLunoraClient } from "./context";
+import type { ReactiveValue } from "./reactive";
+import { source } from "./reactive";
 
 /**
  * The reserved runtime path the generated flag-subscription read override
@@ -42,7 +42,7 @@ const flagKind = (value: unknown): FlagSubscribeArgs["type"] => {
 /** A typed reference to the reserved flags channel so `client.subscribe` infers its args/return. */
 const flagsReference = { __lunoraRef: FLAGS_EVAL_PATH } as FunctionReference<"query", FlagSubscribeArgs, FlagValue>;
 
-/** Open one flag subscription into a readable store's `set`, failing open to the default. */
+/** Open one flag subscription into a reactive `set`, failing open to the default. */
 const subscribeFlag = <T extends FlagValue>(
     client: LunoraClient,
     key: string,
@@ -62,82 +62,99 @@ const subscribeFlag = <T extends FlagValue>(
 };
 
 /**
- * Open a single feature flag as a Svelte readable store, live over Lunora's
- * WebSocket. Read it with the `$store` idiom (`{$darkMode}`).
+ * Open a single feature flag, live over Lunora's WebSocket. Read
+ * `darkMode.current` and it stays live.
  *
- * The store holds `defaultValue` until the first evaluation lands, then the
+ * `current` holds `defaultValue` until the first evaluation lands, then the
  * server's resolved value — re-emitted whenever the provider re-evaluates (e.g. a
  * flag is toggled in Cloudflare Flagship). The flag's kind is inferred from
  * `defaultValue`'s runtime type, so `flag("dark", false)` reads a boolean and
  * `flag("hero", "control")` a string. `context` supplies a per-call targeting
  * context merged on top of the app's default `identify` targeting key.
  *
- * The subscription opens lazily on the first `$`-read and tears down when the
- * last subscriber detaches. Pass `client` explicitly, or omit it to resolve the
+ * The subscription opens lazily on the first tracked read of `current` and
+ * tears down once every effect that read it is destroyed. Pass `client` explicitly, or omit it to resolve the
  * ambient client published by `setLunoraClient`. Evaluation never throws — a
  * provider error resolves the default (the same fail-open contract as `ctx.flags`).
  */
-export function flag<T extends FlagValue>(key: string, defaultValue: T, context?: FlagContext): Readable<T>;
-export function flag<T extends FlagValue>(client: LunoraClient, key: string, defaultValue: T, context?: FlagContext): Readable<T>;
+export function flag<T extends FlagValue>(key: string, defaultValue: T, context?: FlagContext): ReactiveValue<T>;
+export function flag<T extends FlagValue>(client: LunoraClient, key: string, defaultValue: T, context?: FlagContext): ReactiveValue<T>;
 export function flag<T extends FlagValue>(
     clientOrKey: LunoraClient | string,
     keyOrDefault: T | string,
     defaultOrContext?: FlagContext | T,
     maybeContext?: FlagContext,
-): Readable<T> {
+): ReactiveValue<T> {
     const hasExplicitClient = isClient(clientOrKey);
     const client = hasExplicitClient ? clientOrKey : getLunoraClient();
     const key = (hasExplicitClient ? keyOrDefault : clientOrKey) as string;
     const defaultValue = (hasExplicitClient ? defaultOrContext : keyOrDefault) as T;
     const context = (hasExplicitClient ? maybeContext : (defaultOrContext as FlagContext | undefined)) ?? undefined;
 
-    return readable<T>(defaultValue, (set) => subscribeFlag(client, key, defaultValue, context, set));
+    // Evaluation only ever pushes, so hold the resolved value; it starts at the
+    // default, which is also what an untracked read reports.
+    let resolved = defaultValue;
+
+    return source<T>(
+        () => resolved,
+        (update) =>
+            subscribeFlag(client, key, defaultValue, context, (next) => {
+                resolved = next;
+                update();
+            }),
+    );
 }
 
 /**
- * Open several feature flags at once as a single Svelte readable store of the
- * resolved record, live over Lunora's WebSocket.
+ * Open several feature flags at once as a single reactive record, live over
+ * Lunora's WebSocket.
  *
  * Pass a record of `key → defaultValue`; each flag's kind is inferred from its
- * default, and the store holds the same-shaped record with resolved values (the
+ * default, and `current` holds the same-shaped record with resolved values (the
  * defaults until each evaluation lands). A single `context` applies to every
- * flag. This is the batched form of {@link flag} — one store, one subscription
- * per key, torn down together when the last subscriber detaches.
+ * flag. This is the batched form of {@link flag} — one handle, one subscription
+ * per key, torn down together when the last reader goes away.
  *
  * Pass `client` explicitly, or omit it to resolve the ambient client published
  * by `setLunoraClient`.
  */
-export function flags<T extends Record<string, FlagValue>>(flagDefaults: T, context?: FlagContext): Readable<T>;
-export function flags<T extends Record<string, FlagValue>>(client: LunoraClient, flagDefaults: T, context?: FlagContext): Readable<T>;
+export function flags<T extends Record<string, FlagValue>>(flagDefaults: T, context?: FlagContext): ReactiveValue<T>;
+export function flags<T extends Record<string, FlagValue>>(client: LunoraClient, flagDefaults: T, context?: FlagContext): ReactiveValue<T>;
 export function flags<T extends Record<string, FlagValue>>(
     clientOrFlags: LunoraClient | T,
     flagsOrContext?: FlagContext | T,
     maybeContext?: FlagContext,
-): Readable<T> {
+): ReactiveValue<T> {
     const hasExplicitClient = isClient(clientOrFlags);
     const client = hasExplicitClient ? clientOrFlags : getLunoraClient();
     const flagDefaults = (hasExplicitClient ? flagsOrContext : clientOrFlags) as T;
     const context = (hasExplicitClient ? maybeContext : flagsOrContext) ?? undefined;
 
-    return readable<T>(flagDefaults, (set) => {
-        let current = { ...flagDefaults };
-        const unsubscribes: Unsubscribe[] = [];
+    let resolved = { ...flagDefaults };
 
-        for (const [key, defaultValue] of Object.entries(flagDefaults)) {
-            unsubscribes.push(
-                subscribeFlag(client, key, defaultValue, context, (next) => {
-                    current = { ...current, [key]: next };
-                    set(current);
-                }),
-            );
-        }
+    return source<T>(
+        () => resolved,
+        (update) => {
+            const unsubscribes: Unsubscribe[] = [];
 
-        return () => {
-            for (const unsubscribe of unsubscribes) {
-                unsubscribe();
+            for (const [key, defaultValue] of Object.entries(flagDefaults)) {
+                unsubscribes.push(
+                    subscribeFlag(client, key, defaultValue, context, (next) => {
+                        // Replace rather than mutate so a consumer comparing by
+                        // identity sees each evaluation land.
+                        resolved = { ...resolved, [key]: next };
+                        update();
+                    }),
+                );
             }
-        };
-    });
+
+            return () => {
+                for (const unsubscribe of unsubscribes) {
+                    unsubscribe();
+                }
+            };
+        },
+    );
 }
 
 export type { FlagContext, FlagValue };

@@ -1,9 +1,13 @@
 <script lang="ts">
+    import type { Snippet } from "svelte";
+
     import { LunoraClient } from "lunorash/client";
     import { setLunoraClient } from "@lunora/svelte";
 
+    let { children }: { children: Snippet } = $props();
+
     // Publish one LunoraClient on Svelte context for the whole app. The live
-    // `query`/`mutation`/`hydratePreloaded` stores resolve it via getContext.
+    // `query`/`mutation`/`hydratePreloaded` handles resolve it via getContext.
     // `setContext` must run during component init — exactly here, at the root.
     //
     // SAME-ORIGIN: Lunora realtime is mounted under `/_lunora/*` in SvelteKit's
@@ -16,4 +20,4 @@
     setLunoraClient(new LunoraClient({ url }));
 </script>
 
-<slot />
+{@render children()}

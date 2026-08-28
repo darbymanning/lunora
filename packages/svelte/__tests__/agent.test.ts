@@ -1,5 +1,4 @@
 import type { FunctionReference, LunoraClient } from "@lunora/client";
-import { get } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentApi } from "../src/agent";
@@ -85,12 +84,12 @@ describe(agent, () => {
         });
 
         expect(fake.subscribeCalls.map((call) => call.functionPath)).toStrictEqual([THREAD_REF]);
-        expect(get(handle.status)).toBeUndefined();
+        expect(handle.status).toBeUndefined();
 
         fake.push(THREAD_REF, { instanceId: "wf-1", status: "running" });
 
-        expect(get(handle.status)).toBe("running");
-        expect(get(handle.thread)).toStrictEqual({ instanceId: "wf-1", status: "running" });
+        expect(handle.status).toBe("running");
+        expect(handle.thread).toStrictEqual({ instanceId: "wf-1", status: "running" });
 
         handle.teardown();
 
@@ -183,8 +182,8 @@ describe(agent, () => {
         });
 
         expect(fake.subscribeCalls).toHaveLength(0);
-        expect(get(handle.status)).toBeUndefined();
-        expect(get(handle.thread)).toBeUndefined();
+        expect(handle.status).toBeUndefined();
+        expect(handle.thread).toBeUndefined();
 
         // Teardown itself must not throw with nothing live to unsubscribe.
         expect(() => {

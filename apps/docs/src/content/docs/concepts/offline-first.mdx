@@ -187,7 +187,7 @@ const SyncBadge = () => {
     const status = connectionStatus();
 </script>
 
-<span data-status={$status}>{$status === "connected" ? "Live" : "Offline"}</span>
+<span data-status={status.current}>{status.current === "connected" ? "Live" : "Offline"}</span>
 ```
 
 ## Boot with no network (the app shell)

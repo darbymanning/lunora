@@ -277,7 +277,7 @@ export const packages: PackageInfo[] = [
         category: "Client & UI",
         description: "Live stores, optimistic mutations, reactive loaders.",
         docsPath: "/docs/packages/svelte",
-        features: ["Live stores", "Optimistic mutations", "Reactive loaders"],
+        features: ["Runes-native live queries", "Optimistic mutations", "Reactive loaders"],
         name: "Svelte",
         npmName: "@lunora/svelte",
         slug: "svelte",

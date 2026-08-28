@@ -1,9 +1,9 @@
 ---
 title: Svelte
-description: Use Lunora with Svelte 5 / SvelteKit — context-provided client, live query/mutation stores, and the SSR-seed → live reactive-loader handoff.
+description: Use Lunora with Svelte 5 / SvelteKit — context-provided client, runes-native live queries and mutations, and the SSR-seed → live reactive-loader handoff.
 related:
     - to: /docs/packages/svelte
-      note: "the full store + server reference"
+      note: "the full client + server reference"
     - to: /docs/frameworks/bring-your-framework
       note: "composition + adapter maturity"
     - to: /docs/frameworks/reactive-loaders
@@ -14,10 +14,12 @@ related:
 
 `@lunora/svelte` is the Svelte adapter, an idiomatic layer over
 [`@lunora/client`](/docs/packages/client) that re-expresses the live contract as
-Svelte stores you read with the `$store` idiom. A live query is a readable store
-that re-emits on every server delta; an optimistic mutation is a bundle of stores
-plus an awaitable `mutate`. It is plain `.ts` over Svelte stores, so no `.svelte`
-compiler is required to build it.
+runes-native handles. A live query is an object whose `current` re-runs every
+reader on each server delta; an optimistic mutation is a handle of reactive
+properties plus an awaitable `mutate`. Reactivity is
+[`createSubscriber`](https://svelte.dev/docs/svelte/svelte-reactivity#createSubscriber),
+so the package stays plain `.ts` — no `.svelte`/`.svelte.ts` compiler step —
+while every handle is tracked by `$derived`, `$effect`, and template reads.
 
 This page is the task-oriented guide; for the full reference see
 [`@lunora/svelte`](/docs/packages/svelte).
@@ -58,21 +60,26 @@ resolve it for you; call `getLunoraClient()` only if you need it directly.
 
 ```svelte title="src/routes/+layout.svelte"
 <script lang="ts">
+    import type { Snippet } from "svelte";
+
     import { LunoraClient } from "lunorash/client";
     import { setLunoraClient } from "@lunora/svelte";
+
+    let { children }: { children: Snippet } = $props();
 
     setLunoraClient(new LunoraClient({ url: import.meta.env.VITE_LUNORA_URL }));
 </script>
 
-<slot />
+{@render children()}
 ```
 
 ## Live queries
 
-`query(fn, args)` opens a live query as a readable store; read it with `$store`.
-The subscription attaches the moment the store gains its first subscriber and
-tears down when the last one goes away, so an unread store opens no socket. The
-store holds `undefined` until the first response.
+`query(fn, args)` opens a live query; read `handle.current`. The subscription
+attaches on the first tracked read (a template, a `$derived`, an `$effect`) and
+tears down once every effect that read it is destroyed — so an unread handle
+opens no socket, and a server render opens nothing. `current` holds `undefined`
+until the first response.
 
 ```svelte
 <script lang="ts">
@@ -84,10 +91,29 @@ store holds `undefined` until the first response.
 </script>
 
 <ul>
-    {#each $messages ?? [] as m (m._id)}
+    {#each messages.current ?? [] as m (m._id)}
         <li>{m.text}</li>
     {/each}
 </ul>
+```
+
+Read reactive members **off the handle**. `const { current } = query(...)`
+copies the value once and it never updates. For args that change, build the
+handle inside a `$derived.by` — each change constructs a fresh handle and the
+previous subscription is released:
+
+```svelte
+<script lang="ts">
+    import { query } from "@lunora/svelte";
+
+    import { api } from "$lib/_generated/api";
+
+    let channelId = $state("general");
+
+    const messages = $derived.by(() => query(api.messages.list, { channelId }));
+</script>
+
+{#each messages.current ?? [] as m (m._id)}<li>{m.text}</li>{/each}
 ```
 
 `query` is overloaded: pass `client` explicitly as the first argument, or omit
@@ -96,10 +122,10 @@ it to use the ambient client. `options` accepts `{ shardKey }` (for
 
 ## Mutations
 
-`mutation(fn)` creates an optimistic `MutationHandle` of readable stores:
-`{ data, error, pending, mutate, reset }`. Read `$pending` to disable a button;
-it is ref-counted across overlapping calls. You pass optimistic updates **per
-call**.
+`mutation(fn)` creates an optimistic `MutationHandle`:
+`{ data, error, pending, mutate, reset }`. Read `handle.pending` to disable a
+button; it is ref-counted across overlapping calls. You pass optimistic updates
+**per call**.
 
 ```svelte
 <script lang="ts">
@@ -107,10 +133,10 @@ call**.
 
     import { api } from "$lib/_generated/api";
 
-    const { mutate, pending, error } = mutation(api.messages.send);
+    const message = mutation(api.messages.send);
 
     const send = () =>
-        mutate(
+        message.mutate(
             { channelId: "general", text: "hi" },
             {
                 optimisticUpdate: (store) => {
@@ -121,17 +147,17 @@ call**.
         );
 </script>
 
-<button disabled={$pending} on:click={send}>Send</button>
-{#if $error}<p>{$error.message}</p>{/if}
+<button disabled={message.pending} onclick={send}>Send</button>
+{#if message.error}<p>{message.error.message}</p>{/if}
 ```
 
 ## Reactive loaders
 
 Run the query on the server with the socket-free `@lunora/svelte/server` entry in
 a SvelteKit `+page.ts` / `+layout.ts` `load`, return the serializable `Preloaded`
-token, and `hydratePreloaded` seeds the readable store **synchronously**. The
-first `$store` read returns the server value with no loading flash, then the live
-subscription attaches when the store gains its first client subscriber.
+token, and `hydratePreloaded` seeds `current` **synchronously**. The first read
+returns the server value with no loading flash, then the live subscription
+attaches on the first tracked read in the browser.
 
 ```ts title="src/routes/posts/+page.ts"
 import { createServerClient, preloadQuery } from "@lunora/svelte/server";
@@ -151,13 +177,13 @@ export async function load({ fetch }) {
 <script lang="ts">
     import { hydratePreloaded } from "@lunora/svelte";
 
-    export let data;
+    let { data } = $props();
 
-    const posts = hydratePreloaded(data.preloaded);
+    const posts = $derived(hydratePreloaded(data.preloaded));
 </script>
 
 <ul>
-    {#each $posts as p (p._id)}
+    {#each posts.current as p (p._id)}
         <li>{p.title}</li>
     {/each}
 </ul>

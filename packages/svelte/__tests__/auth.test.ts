@@ -1,8 +1,8 @@
 import type { LunoraClient, Unsubscribe, User } from "@lunora/client";
-import { get } from "svelte/store";
 import { describe, expect, it, vi } from "vitest";
 
 import { auth, authGate } from "../src/auth";
+import { track } from "./track";
 
 const createAuthFakeClient = () => {
     let token: string | null = null;
@@ -45,142 +45,142 @@ const flushAsync = async (): Promise<void> => {
     await vi.waitFor(() => undefined);
 };
 
-describe("auth store (Svelte)", () => {
+describe(auth, () => {
     it("token starts as null when no token is set", () => {
         const fake = createAuthFakeClient();
-        const { token } = auth(fake.client);
+        const handle = auth(fake.client);
 
-        const stop = token.subscribe(() => {});
+        const reader = track(() => handle.token);
 
-        expect(get(token)).toBeNull();
+        expect(handle.token).toBeNull();
 
-        stop();
+        reader.stop();
     });
 
-    it("setToken updates the token store", () => {
+    it("setToken updates the token", () => {
         const fake = createAuthFakeClient();
-        const { setToken, token } = auth(fake.client);
+        const handle = auth(fake.client);
 
-        const stop = token.subscribe(() => {});
+        const reader = track(() => handle.token);
 
-        setToken("jwt-abc");
+        handle.setToken("jwt-abc");
 
         expect(fake.setAuthToken).toHaveBeenCalledWith("jwt-abc");
-        expect(get(token)).toBe("jwt-abc");
+        expect(handle.token).toBe("jwt-abc");
 
-        stop();
+        reader.stop();
     });
 
     it("user resolves after token is set", async () => {
         const fake = createAuthFakeClient();
         fake.setCurrentUser({ id: "u_1" });
 
-        const { setToken, user } = auth(fake.client);
+        const handle = auth(fake.client);
 
-        const stop = user.subscribe(() => {});
+        const reader = track(() => handle.user);
 
-        expect(get(user)).toBeNull();
+        expect(handle.user).toBeNull();
 
-        setToken("jwt-abc");
+        handle.setToken("jwt-abc");
         await flushAsync();
 
-        expect(get(user)).toStrictEqual({ id: "u_1" });
+        expect(handle.user).toStrictEqual({ id: "u_1" });
 
-        stop();
+        reader.stop();
     });
 
     it("user clears on sign-out", async () => {
         const fake = createAuthFakeClient();
         fake.setCurrentUser({ id: "u_1" });
 
-        const { setToken, user } = auth(fake.client);
-        const stop = user.subscribe(() => {});
+        const handle = auth(fake.client);
+        const reader = track(() => handle.user);
 
-        setToken("jwt-abc");
+        handle.setToken("jwt-abc");
         await flushAsync();
 
-        expect(get(user)).toStrictEqual({ id: "u_1" });
+        expect(handle.user).toStrictEqual({ id: "u_1" });
 
-        setToken(null);
+        handle.setToken(null);
         await flushAsync();
 
-        expect(get(user)).toBeNull();
+        expect(handle.user).toBeNull();
 
-        stop();
+        reader.stop();
     });
 });
 
-describe("authGate store (Svelte)", () => {
+describe(authGate, () => {
     it("is neither loading nor authenticated before a token is set (signed out)", () => {
         const fake = createAuthFakeClient();
-        const { isAuthenticated, isLoading } = authGate(fake.client);
+        const gate = authGate(fake.client);
 
-        const stopA = isAuthenticated.subscribe(() => {});
-        const stopL = isLoading.subscribe(() => {});
+        const authenticated = track(() => gate.isAuthenticated);
+        const loading = track(() => gate.isLoading);
 
-        expect(get(isAuthenticated)).toBe(false);
-        expect(get(isLoading)).toBe(false);
+        expect(gate.isAuthenticated).toBe(false);
+        expect(gate.isLoading).toBe(false);
 
-        stopA();
-        stopL();
+        authenticated.stop();
+        loading.stop();
     });
 
     it("is loading once a token is set but the user hasn't resolved yet", () => {
         const fake = createAuthFakeClient();
-        const { isAuthenticated, isLoading } = authGate(fake.client);
+        const gate = authGate(fake.client);
 
-        const stopA = isAuthenticated.subscribe(() => {});
-        const stopL = isLoading.subscribe(() => {});
+        const authenticated = track(() => gate.isAuthenticated);
+        const loading = track(() => gate.isLoading);
 
         fake.setAuthToken("jwt-abc");
 
-        expect(get(isLoading)).toBe(true);
-        expect(get(isAuthenticated)).toBe(false);
+        expect(gate.isLoading).toBe(true);
+        expect(gate.isAuthenticated).toBe(false);
 
-        stopA();
-        stopL();
+        authenticated.stop();
+        loading.stop();
     });
 
     it("is authenticated once the token is set and the user has resolved", async () => {
         const fake = createAuthFakeClient();
         fake.setCurrentUser({ id: "u_1" });
 
-        const { isAuthenticated, isLoading } = authGate(fake.client);
+        const gate = authGate(fake.client);
 
-        const stopA = isAuthenticated.subscribe(() => {});
-        const stopL = isLoading.subscribe(() => {});
+        const authenticated = track(() => gate.isAuthenticated);
+        const loading = track(() => gate.isLoading);
 
         fake.setAuthToken("jwt-abc");
         await flushAsync();
 
-        expect(get(isAuthenticated)).toBe(true);
-        expect(get(isLoading)).toBe(false);
+        expect(gate.isAuthenticated).toBe(true);
+        expect(gate.isLoading).toBe(false);
 
-        stopA();
-        stopL();
+        authenticated.stop();
+        loading.stop();
     });
 
     it("returns to signed out on sign-out", async () => {
         const fake = createAuthFakeClient();
         fake.setCurrentUser({ id: "u_1" });
 
-        const { isAuthenticated, isLoading } = authGate(fake.client);
+        const gate = authGate(fake.client);
 
-        const stopA = isAuthenticated.subscribe(() => {});
-        const stopL = isLoading.subscribe(() => {});
+        const authenticated = track(() => gate.isAuthenticated);
+        const loading = track(() => gate.isLoading);
 
         fake.setAuthToken("jwt-abc");
         await flushAsync();
 
-        expect(get(isAuthenticated)).toBe(true);
+        expect(gate.isAuthenticated).toBe(true);
 
         fake.setAuthToken(null);
         await flushAsync();
 
-        expect(get(isAuthenticated)).toBe(false);
-        expect(get(isLoading)).toBe(false);
+        expect(gate.isAuthenticated).toBe(false);
+        expect(gate.isLoading).toBe(false);
 
-        stopA();
-        stopL();
+        authenticated.stop();
+        loading.stop();
     });
 });

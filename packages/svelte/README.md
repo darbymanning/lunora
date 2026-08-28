@@ -6,7 +6,7 @@
 
 </a>
 
-<h3 align="center">Svelte adapter for Lunora — live stores, optimistic mutations, and reactive loaders</h3>
+<h3 align="center">Svelte 5 adapter for Lunora — runes-native live queries, optimistic mutations, and reactive loaders</h3>
 
 <!-- END_PACKAGE_OG_IMAGE_PLACEHOLDER -->
 
@@ -34,7 +34,7 @@
 
 ---
 
-The Svelte adapter for Lunora. Thin, idiomatic glue over the framework-neutral `@lunora/client`, re-expressed as Svelte stores you read with the `$store` idiom: live query stores, optimistic mutations, and a `hydratePreloaded` SSR handoff. Plain `.ts` over stores — no `.svelte` compiler is required to build or test it.
+The Svelte 5 adapter for Lunora. Thin, idiomatic glue over the framework-neutral `@lunora/client`, re-expressed as runes-native handles you read as plain properties: live queries, optimistic mutations, and a `hydratePreloaded` SSR handoff. Reactivity is `svelte/reactivity`'s `createSubscriber`, so the package stays plain `.ts` — no `.svelte`/`.svelte.ts` compiler step to build or test it — while every handle is tracked by `$derived`, `$effect`, and template reads like any other rune.
 
 Part of the [Lunora](https://github.com/anolilab/lunora) framework — a type-safe, real-time backend on Cloudflare Workers + Durable Objects with a Vite-first DX.
 
@@ -59,13 +59,17 @@ Provide the client once at the root (`setContext` must run during component init
 ```svelte
 <!-- +layout.svelte -->
 <script lang="ts">
+    import type { Snippet } from "svelte";
+
     import { LunoraClient } from "@lunora/client";
     import { setLunoraClient } from "@lunora/svelte";
+
+    let { children }: { children: Snippet } = $props();
 
     setLunoraClient(new LunoraClient({ url: import.meta.env.VITE_LUNORA_URL }));
 </script>
 
-<slot />
+{@render children()}
 ```
 
 Then read a live query and run a mutation in any descendant component:
@@ -76,17 +80,41 @@ Then read a live query and run a mutation in any descendant component:
     import { query, mutation } from "@lunora/svelte";
     import { api } from "$lib/_generated/api";
 
-    // `$messages` updates on every server delta; `undefined` until the first response.
+    // `messages.current` updates on every server delta; `undefined` until the first response.
     const messages = query(api.messages.list, { room: "general" });
-    const { mutate, pending } = mutation(api.messages.send);
+    const send = mutation(api.messages.send);
 </script>
 
 <ul>
-    {#each $messages ?? [] as m (m._id)}
+    {#each messages.current ?? [] as m (m._id)}
         <li>{m.text}</li>
     {/each}
 </ul>
-<button disabled={$pending} on:click={() => mutate({ room: "general", text: "hi" })}>Send</button>
+<button disabled={send.pending} onclick={() => send.mutate({ room: "general", text: "hi" })}>Send</button>
+```
+
+Read reactive members **off the handle** (`messages.current`, `send.pending`).
+Destructuring one — `const { pending } = mutation(...)` — copies the value once
+and it never updates; destructuring the plain functions (`mutate`, `loadMore`,
+`teardown`) is fine.
+
+A subscription opens on the first tracked read of a handle and is released once
+every effect that read it is destroyed, so an unread handle opens no socket and
+an unmounting component cleans up after itself. For args that change, build the
+handle inside a `$derived.by`:
+
+```svelte
+<script lang="ts">
+    import { query } from "@lunora/svelte";
+    import { api } from "$lib/_generated/api";
+
+    let room = $state("general");
+
+    // Each change builds a fresh handle; the previous subscription is released.
+    const messages = $derived.by(() => query(api.messages.list, { room }));
+</script>
+
+{#each messages.current ?? [] as m (m._id)}<li>{m.text}</li>{/each}
 ```
 
 The `api.*` references come from `$lib/_generated/api`, emitted by codegen from your `lunora/schema.ts` and functions.
@@ -97,22 +125,22 @@ The `api.*` references come from `$lib/_generated/api`, emitted by codegen from 
 
 All functions that require a component lifecycle (presence, rate-limit) return a `teardown()` function. Call it from `onDestroy(handle.teardown)` to clean up intervals and subscriptions.
 
-| Function           | React equivalent      | Description                                                                            |
-| ------------------ | --------------------- | -------------------------------------------------------------------------------------- |
-| `setLunoraClient`  | `LunoraProvider`      | Store the ambient `LunoraClient` in Svelte context.                                    |
-| `getLunoraClient`  | `useLunora`           | Read the ambient `LunoraClient` from Svelte context.                                   |
-| `query`            | `useQuery`            | Live readable store — updates on every server delta.                                   |
-| `mutation`         | `useMutation`         | Optimistic mutation handle (`data`, `error`, `pending`, `mutate`, `reset` stores).     |
-| `subscription`     | `useSubscription`     | Raw subscription readable — unbounded live stream.                                     |
-| `paginatedQuery`   | `usePaginatedQuery`   | Cursor-paginated query with `loadMore`, `status`, and `results` stores.                |
-| `infiniteQuery`    | `useInfiniteQuery`    | Infinite-scroll variant of `paginatedQuery`.                                           |
-| `auth`             | `useAuth`             | Reactive auth stores (`user`, `token`) plus `setToken`.                                |
-| `presence`         | `usePresence`         | Collaborative-awareness — heartbeat + live present-members readable + `teardown`.      |
-| `flag`             | `useFlag`             | Live OpenFeature flag readable store — holds `default` until the server answers.       |
-| `flags`            | `useFlags`            | Batch variant — a readable store of one value per key in the defaults map.             |
-| `rateLimit`        | `useRateLimit`        | Client-side rate-limit mirror — `ok`, `disabled`, `retryAfter` readables + `teardown`. |
-| `connectionStatus` | `useConnectionStatus` | Reactive connection state store.                                                       |
-| `hydratePreloaded` | `usePreloadedQuery`   | Seed a query store from an SSR `Preloaded` token, then go live.                        |
+| Function           | React equivalent      | Description                                                                  |
+| ------------------ | --------------------- | ---------------------------------------------------------------------------- |
+| `setLunoraClient`  | `LunoraProvider`      | Publish the ambient `LunoraClient` on Svelte context.                        |
+| `getLunoraClient`  | `useLunora`           | Read the ambient `LunoraClient` from Svelte context.                         |
+| `query`            | `useQuery`            | Live query — `current` updates on every server delta.                        |
+| `mutation`         | `useMutation`         | Optimistic mutation handle (`data`, `error`, `pending`, `mutate`, `reset`).  |
+| `subscription`     | `useSubscription`     | Raw subscription — unbounded live stream as `data` / `error`.                |
+| `paginatedQuery`   | `usePaginatedQuery`   | Cursor-paginated query with `loadMore`, `status`, and `results`.             |
+| `infiniteQuery`    | `useInfiniteQuery`    | Infinite-scroll variant of `paginatedQuery`.                                 |
+| `auth`             | `useAuth`             | Reactive `user` / `token` plus `setToken`.                                   |
+| `presence`         | `usePresence`         | Collaborative-awareness — heartbeat + live `present` members + `teardown`.   |
+| `flag`             | `useFlag`             | Live OpenFeature flag — `current` holds `default` until the server answers.  |
+| `flags`            | `useFlags`            | Batch variant — `current` is one value per key in the defaults map.          |
+| `rateLimit`        | `useRateLimit`        | Client-side rate-limit mirror — `ok`, `disabled`, `retryAfter` + `teardown`. |
+| `connectionStatus` | `useConnectionStatus` | Reactive connection state as `current`.                                      |
+| `hydratePreloaded` | `usePreloadedQuery`   | Seed a query handle from an SSR `Preloaded` token, then go live.             |
 
 ## Related
 

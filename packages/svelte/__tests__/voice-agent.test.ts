@@ -1,4 +1,3 @@
-import { get } from "svelte/store";
 import type { Mock } from "vitest";
 import { describe, expect, it, vi } from "vitest";
 
@@ -137,13 +136,13 @@ describe(voiceAgent, () => {
 
         await handle.startCall();
 
-        expect(get(handle.status)).toBe("listening");
-        expect(get(handle.connected)).toBe(false);
+        expect(handle.status).toBe("listening");
+        expect(handle.connected).toBe(false);
 
         socket().emitServer({ audioFormat: "mp3", type: "ready" });
 
-        expect(get(handle.connected)).toBe(true);
-        expect(get(handle.status)).toBe("listening");
+        expect(handle.connected).toBe(true);
+        expect(handle.status).toBe("listening");
         // The handle flips the socket to binary framing for PCM/audio.
         expect(socket().binaryType).toBe("arraybuffer");
 
@@ -161,18 +160,18 @@ describe(voiceAgent, () => {
         mic().config.onSilence();
 
         expect(socket().sent).toContainEqual(JSON.stringify({ type: "commit" }));
-        expect(get(handle.status)).toBe("thinking");
+        expect(handle.status).toBe("thinking");
 
         socket().emitServer({ text: "what is the weather", type: "user_transcript" });
 
-        expect(get(handle.transcript)).toBe("what is the weather");
-        expect(get(handle.status)).toBe("thinking");
+        expect(handle.transcript).toBe("what is the weather");
+        expect(handle.status).toBe("thinking");
 
         socket().emitServer({ text: "It is ", type: "assistant_delta" });
         socket().emitServer({ text: "sunny.", type: "assistant_delta" });
 
-        expect(get(handle.status)).toBe("speaking");
-        expect(get(handle.interimTranscript)).toBe("It is sunny.");
+        expect(handle.status).toBe("speaking");
+        expect(handle.interimTranscript).toBe("It is sunny.");
 
         socket().emitBinary(new Uint8Array([1, 2, 3]));
 
@@ -180,8 +179,8 @@ describe(voiceAgent, () => {
 
         socket().emitServer({ text: "It is sunny.", type: "assistant_done" });
 
-        expect(get(handle.status)).toBe("listening");
-        expect(get(handle.interimTranscript)).toBe("It is sunny.");
+        expect(handle.status).toBe("listening");
+        expect(handle.interimTranscript).toBe("It is sunny.");
 
         handle.endCall();
     });
@@ -199,7 +198,7 @@ describe(voiceAgent, () => {
 
         handle.toggleMute();
 
-        expect(get(handle.isMuted)).toBe(true);
+        expect(handle.isMuted).toBe(true);
         expect(mic().setMuted).toHaveBeenCalledWith(true);
 
         handle.endCall();
@@ -215,13 +214,13 @@ describe(voiceAgent, () => {
         // The agent's spoken audio creates the speaker the barge-in will cancel.
         socket().emitBinary(new Uint8Array([4, 5, 6]));
 
-        expect(get(handle.status)).toBe("speaking");
+        expect(handle.status).toBe("speaking");
 
         mic().config.onInterrupt();
 
         expect(socket().sent).toContainEqual(JSON.stringify({ type: "interrupt" }));
         expect(speaker().interrupt).toHaveBeenCalledTimes(1);
-        expect(get(handle.status)).toBe("listening");
+        expect(handle.status).toBe("listening");
 
         handle.endCall();
     });
@@ -234,14 +233,14 @@ describe(voiceAgent, () => {
         handle.sendText("hello there");
 
         expect(socket().sent).toContainEqual(JSON.stringify({ text: "hello there", type: "text" }));
-        expect(get(handle.status)).toBe("thinking");
+        expect(handle.status).toBe("thinking");
 
         const micStop = mic().stop;
         const socketClose = socket().close;
 
         handle.endCall();
 
-        expect(get(handle.status)).toBe("idle");
+        expect(handle.status).toBe("idle");
         expect(micStop).toHaveBeenCalledTimes(1);
         expect(socketClose).toHaveBeenCalledTimes(1);
     });
@@ -254,7 +253,7 @@ describe(voiceAgent, () => {
 
         socket().emitServer({ audioFormat: "wav", type: "ready" });
 
-        expect(get(handle.connected)).toBe(true);
+        expect(handle.connected).toBe(true);
 
         handle.endCall();
     });

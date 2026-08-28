@@ -1,4 +1,3 @@
-import { get } from "svelte/store";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { rateLimit } from "../src/rate-limit";
@@ -12,13 +11,13 @@ describe("rateLimit (Svelte)", () => {
         const clock = { now: 0 };
         const handle = rateLimit({ kind: "token bucket", period: 1000, rate: 2 }, { now: () => clock.now });
 
-        expect(get(handle.ok)).toBe(true);
+        expect(handle.ok).toBe(true);
 
         handle.consume();
         handle.consume();
 
-        expect(get(handle.disabled)).toBe(true);
-        expect(get(handle.retryAfter)).toBeGreaterThan(0);
+        expect(handle.disabled).toBe(true);
+        expect(handle.retryAfter).toBeGreaterThan(0);
 
         handle.teardown();
     });
@@ -44,11 +43,11 @@ describe("rateLimit (Svelte)", () => {
         handle.consume();
         handle.consume();
 
-        expect(get(handle.disabled)).toBe(true);
+        expect(handle.disabled).toBe(true);
 
         handle.reset();
 
-        expect(get(handle.ok)).toBe(true);
+        expect(handle.ok).toBe(true);
 
         handle.teardown();
     });
@@ -61,14 +60,14 @@ describe("rateLimit (Svelte)", () => {
         handle.consume();
         handle.consume();
 
-        expect(get(handle.disabled)).toBe(true);
+        expect(handle.disabled).toBe(true);
 
         // 2 tokens / 1000ms means one token returns after 500ms; the tick
-        // interval bumps epoch and the derived store flips back to available.
+        // interval bumps epoch and the status getter flips back to available.
         clock.now = 500;
         await vi.advanceTimersByTimeAsync(250);
 
-        expect(get(handle.ok)).toBe(true);
+        expect(handle.ok).toBe(true);
 
         handle.teardown();
     });
@@ -104,7 +103,7 @@ describe("rateLimit (Svelte)", () => {
         handle.consume();
         handle.consume();
 
-        expect(get(handle.disabled)).toBe(true);
+        expect(handle.disabled).toBe(true);
         expect(vi.getTimerCount()).toBe(1);
 
         handle.teardown();

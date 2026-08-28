@@ -14,9 +14,9 @@ here is a public-API change and must be reviewed as one (SemVer applies).
 ```ts
 interface ActionHandle<F extends FunctionReference> {
     call: (args: ArgsOf<F>, options?: ActionCallOptions) => Promise<ReturnOf<F>>;
-    data: Readable<ReturnOf<F> | undefined>;
-    error: Readable<Error | undefined>;
-    pending: Readable<boolean>;
+    readonly data: ReturnOf<F> | undefined;
+    readonly error: Error | undefined;
+    readonly pending: boolean;
     reset: () => void;
 }
 ```
@@ -51,11 +51,11 @@ interface AgentChatApi {
 interface AgentChatHandle {
     approve: (toolCallId: string, note?: string) => Promise<void>;
     cancel: () => Promise<void>;
-    messages: Readable<ReadonlyArray<AgentChatMessage>>;
+    readonly messages: ReadonlyArray<AgentChatMessage>;
     reject: (toolCallId: string, note?: string) => Promise<void>;
     send: (input: string, args?: Record<string, unknown>) => Promise<void>;
-    status: Readable<AgentThreadStatus | undefined>;
-    streamingText: Readable<string>;
+    readonly status: AgentThreadStatus | undefined;
+    readonly streamingText: string;
     teardown: () => void;
 }
 ```
@@ -99,11 +99,11 @@ interface AgentChatOptions {
 ```ts
 interface AgentHandle {
     cancel: () => Promise<void>;
-    pending: Readable<boolean>;
+    readonly pending: boolean;
     run: (input: string, args?: Record<string, unknown>) => Promise<void>;
-    status: Readable<AgentThreadStatus | undefined>;
+    readonly status: AgentThreadStatus | undefined;
     teardown: () => void;
-    thread: Readable<AgentThreadRecord | undefined>;
+    readonly thread: AgentThreadRecord | undefined;
 }
 ```
 
@@ -152,8 +152,8 @@ interface AgentStateApi {
 
 ```ts
 interface AgentStateHandle<T> {
-    error: Readable<Error | undefined>;
-    state: Readable<T | undefined>;
+    readonly error: Error | undefined;
+    readonly state: T | undefined;
 }
 ```
 
@@ -240,7 +240,7 @@ interface AgentToolEventsApi {
 
 ```ts
 interface AgentToolEventsHandle {
-    events: Readable<ReadonlyArray<AgentToolEvent>>;
+    readonly events: ReadonlyArray<AgentToolEvent>;
 }
 ```
 
@@ -259,22 +259,22 @@ interface AgentToolEventsOptions {
 
 Re-exported from `@lunora/client` — signature tracked at its source.
 
-### `AuthGateStore` (interface)
+### `AuthGateHandle` (interface)
 
 ```ts
-interface AuthGateStore {
-    isAuthenticated: Readable<boolean>;
-    isLoading: Readable<boolean>;
+interface AuthGateHandle {
+    readonly isAuthenticated: boolean;
+    readonly isLoading: boolean;
 }
 ```
 
-### `AuthStore` (interface)
+### `AuthHandle` (interface)
 
 ```ts
-interface AuthStore {
+interface AuthHandle {
     setToken: (token: string | null) => void;
-    token: Readable<string | null>;
-    user: Readable<User | null>;
+    readonly token: string | null;
+    readonly user: User | null;
 }
 ```
 
@@ -282,10 +282,10 @@ interface AuthStore {
 
 Re-exported from `@lunora/client` — signature tracked at its source.
 
-### `ConnectionStatusStore` (type)
+### `ConnectionStatusHandle` (type)
 
 ```ts
-type ConnectionStatusStore = Readable<ConnectionStatus>;
+type ConnectionStatusHandle = ReactiveValue<ConnectionStatus>;
 ```
 
 ### `FlagContext` (type)
@@ -321,11 +321,11 @@ type HeartbeatReference = FunctionReference<"mutation", {
 ```ts
 interface InfiniteQueryHandle<T> {
     fetchNextPage: (numberItems?: number) => void;
-    hasNextPage: Readable<boolean>;
-    isFetchingNextPage: Readable<boolean>;
-    isLoading: Readable<boolean>;
-    pages: Readable<T[][]>;
-    status: Readable<PaginationStatus>;
+    readonly hasNextPage: boolean;
+    readonly isFetchingNextPage: boolean;
+    readonly isLoading: boolean;
+    readonly pages: T[][];
+    readonly status: PaginationStatus;
 }
 ```
 
@@ -358,10 +358,10 @@ Re-exported from `@lunora/client` — signature tracked at its source.
 
 ```ts
 interface MutationHandle<F extends FunctionReference> {
-    data: Readable<ReturnOf<F> | undefined>;
-    error: Readable<Error | undefined>;
+    readonly data: ReturnOf<F> | undefined;
+    readonly error: Error | undefined;
     mutate: (args: ArgsOf<F>, options?: MutationCallOptions<unknown, unknown, ArgsOf<F>>) => Promise<ReturnOf<F>>;
-    pending: Readable<boolean>;
+    readonly pending: boolean;
     reset: () => void;
 }
 ```
@@ -370,14 +370,14 @@ interface MutationHandle<F extends FunctionReference> {
 
 Re-exported from `@lunora/client` — signature tracked at its source.
 
-### `MutatorHandleStore` (interface)
+### `MutatorState` (interface)
 
 ```ts
-interface MutatorHandleStore<TArgs> {
-    error: Readable<Error | undefined>;
-    isError: Readable<boolean>;
+interface MutatorState<TArgs> {
+    readonly error: Error | undefined;
+    readonly isError: boolean;
     mutate: (args: TArgs) => Promise<void>;
-    pending: Readable<boolean>;
+    readonly pending: boolean;
     reset: () => void;
 }
 ```
@@ -404,10 +404,10 @@ type PaginatedArgs<F extends FunctionReference> = Omit<ArgsOf<F>, "paginationOpt
 
 ```ts
 interface PaginatedQueryHandle<T> {
-    isLoading: Readable<boolean>;
+    readonly isLoading: boolean;
     loadMore: (numberItems: number) => void;
-    results: Readable<T[]>;
-    status: Readable<PaginationStatus>;
+    readonly results: T[];
+    readonly status: PaginationStatus;
 }
 ```
 
@@ -428,7 +428,7 @@ Re-exported from `@lunora/client` — signature tracked at its source.
 
 ```ts
 interface PresenceHandle<L extends ListPresentReference> {
-    present: Readable<ReturnOf<L> | undefined>;
+    readonly present: ReturnOf<L> | undefined;
     sessionId: string;
     setData: (data: Record<string, unknown> | undefined) => void;
     teardown: () => void;
@@ -448,16 +448,16 @@ interface PresenceOptions<H extends HeartbeatReference, L extends ListPresentRef
 }
 ```
 
-### `QueryStore` (type)
+### `QueryHandle` (type)
 
 ```ts
-type QueryStore<F extends FunctionReference> = Readable<ReturnOf<F> | undefined>;
+type QueryHandle<F extends FunctionReference> = ReactiveValue<ReturnOf<F> | undefined>;
 ```
 
-### `QueryStoreOptions` (interface)
+### `QueryOptions` (interface)
 
 ```ts
-interface QueryStoreOptions {
+interface QueryOptions {
     onError?: SubscriptionErrorCallback;
     shardKey?: string;
 }
@@ -469,10 +469,10 @@ interface QueryStoreOptions {
 interface RateLimitHandle {
     check: (count?: number) => boolean;
     consume: (count?: number) => RateLimitStatus;
-    disabled: Readable<boolean>;
-    ok: Readable<boolean>;
+    readonly disabled: boolean;
+    readonly ok: boolean;
     reset: () => void;
-    retryAfter: Readable<number>;
+    readonly retryAfter: number;
     teardown: () => void;
 }
 ```
@@ -486,18 +486,6 @@ interface RateLimitOptions {
 }
 ```
 
-### `ReactiveArgs` (type)
-
-```ts
-type ReactiveArgs<F extends FunctionReference> = ArgsOf<F> | "skip" | Readable<ArgsOf<F> | "skip">;
-```
-
-### `ReactivePaginatedArgs` (type)
-
-```ts
-type ReactivePaginatedArgs<F extends FunctionReference> = "skip" | PaginatedArgs<F> | Readable<"skip" | PaginatedArgs<F>>;
-```
-
 ### `ReturnOf` (type)
 
 Re-exported from `@lunora/client` — signature tracked at its source.
@@ -507,10 +495,19 @@ Re-exported from `@lunora/client` — signature tracked at its source.
 ```ts
 interface StreamHandle<T> {
     cancel: () => void;
-    chunks: Readable<ReadonlyArray<T>>;
-    error: Readable<Error | undefined>;
-    status: Readable<StreamStatus>;
+    readonly chunks: ReadonlyArray<T>;
+    readonly error: Error | undefined;
+    readonly status: StreamStatus;
     teardown: () => void;
+}
+```
+
+### `StreamOptions` (interface)
+
+```ts
+interface StreamOptions {
+    maxBuffer?: number;
+    shardKey?: string;
 }
 ```
 
@@ -520,28 +517,19 @@ interface StreamHandle<T> {
 type StreamStatus = "complete" | "error" | "idle" | "streaming";
 ```
 
-### `StreamStoreOptions` (interface)
-
-```ts
-interface StreamStoreOptions {
-    maxBuffer?: number;
-    shardKey?: string;
-}
-```
-
 ### `SubscriptionHandle` (interface)
 
 ```ts
 interface SubscriptionHandle<T> {
-    data: Readable<T | undefined>;
-    error: Readable<Error | undefined>;
+    readonly data: T | undefined;
+    readonly error: Error | undefined;
 }
 ```
 
-### `SubscriptionStoreOptions` (interface)
+### `SubscriptionOptions` (interface)
 
 ```ts
-interface SubscriptionStoreOptions {
+interface SubscriptionOptions {
     onError?: (error: Error) => void;
     shardKey?: string;
 }
@@ -551,17 +539,17 @@ interface SubscriptionStoreOptions {
 
 ```ts
 interface VoiceAgentHandle {
-    audioLevel: Readable<number>;
-    connected: Readable<boolean>;
+    readonly audioLevel: number;
+    readonly connected: boolean;
     endCall: () => void;
-    error: Readable<Error | undefined>;
-    interimTranscript: Readable<string>;
-    isMuted: Readable<boolean>;
+    readonly error: Error | undefined;
+    readonly interimTranscript: string;
+    readonly isMuted: boolean;
     sendText: (text: string) => void;
     startCall: () => Promise<void>;
-    status: Readable<VoiceStatus>;
+    readonly status: VoiceStatus;
     toggleMute: () => boolean;
-    transcript: Readable<string>;
+    readonly transcript: string;
 }
 ```
 
@@ -644,35 +632,35 @@ function agentToolEvents(client: LunoraClient, options: AgentToolEventsOptions):
 ### `auth` (const)
 
 ```ts
-const auth: (explicitClient?: ReturnType<typeof getLunoraClient>) => AuthStore;
+const auth: (explicitClient?: ReturnType<typeof getLunoraClient>) => AuthHandle;
 ```
 
 ### `authGate` (const)
 
 ```ts
-const authGate: (explicitClient?: ReturnType<typeof getLunoraClient>) => AuthGateStore;
+const authGate: (explicitClient?: ReturnType<typeof getLunoraClient>) => AuthGateHandle;
 ```
 
 ### `connectionStatus` (const)
 
 ```ts
-const connectionStatus: (client?: LunoraClient) => ConnectionStatusStore;
+const connectionStatus: (client?: LunoraClient) => ConnectionStatusHandle;
 ```
 
 ### `flag` (function)
 
 ```ts
-function flag<T extends FlagValue>(key: string, defaultValue: T, context?: FlagContext): Readable<T>;
+function flag<T extends FlagValue>(key: string, defaultValue: T, context?: FlagContext): ReactiveValue<T>;
 
-function flag<T extends FlagValue>(client: LunoraClient, key: string, defaultValue: T, context?: FlagContext): Readable<T>;
+function flag<T extends FlagValue>(client: LunoraClient, key: string, defaultValue: T, context?: FlagContext): ReactiveValue<T>;
 ```
 
 ### `flags` (function)
 
 ```ts
-function flags<T extends Record<string, FlagValue>>(flagDefaults: T, context?: FlagContext): Readable<T>;
+function flags<T extends Record<string, FlagValue>>(flagDefaults: T, context?: FlagContext): ReactiveValue<T>;
 
-function flags<T extends Record<string, FlagValue>>(client: LunoraClient, flagDefaults: T, context?: FlagContext): Readable<T>;
+function flags<T extends Record<string, FlagValue>>(client: LunoraClient, flagDefaults: T, context?: FlagContext): ReactiveValue<T>;
 ```
 
 ### `getLunoraClient` (const)
@@ -684,7 +672,7 @@ const getLunoraClient: () => LunoraClient;
 ### `hydratePreloaded` (const)
 
 ```ts
-const hydratePreloaded: <T>(preloaded: Preloaded<T>, client?: LunoraClient) => Readable<T>;
+const hydratePreloaded: <T>(preloaded: Preloaded<T>, client?: LunoraClient) => ReactiveValue<T>;
 ```
 
 ### `infiniteQuery` (function)
@@ -706,15 +694,15 @@ function mutation<F extends FunctionReference>(client: LunoraClient, function_: 
 ### `mutator` (const)
 
 ```ts
-const mutator: <TArgs = Record<string, unknown>>(handle: MutatorHandle<TArgs>) => MutatorHandleStore<TArgs>;
+const mutator: <TArgs = Record<string, unknown>>(handle: MutatorHandle<TArgs>) => MutatorState<TArgs>;
 ```
 
 ### `paginatedQuery` (function)
 
 ```ts
-function paginatedQuery<F extends FunctionReference>(function_: F, args: ReactivePaginatedArgs<F>, options: PaginatedQueryOptions): PaginatedQueryHandle<PageItemOf<F>>;
+function paginatedQuery<F extends FunctionReference>(function_: F, args: "skip" | PaginatedArgs<F>, options: PaginatedQueryOptions): PaginatedQueryHandle<PageItemOf<F>>;
 
-function paginatedQuery<F extends FunctionReference>(client: LunoraClient, function_: F, args: ReactivePaginatedArgs<F>, options: PaginatedQueryOptions): PaginatedQueryHandle<PageItemOf<F>>;
+function paginatedQuery<F extends FunctionReference>(client: LunoraClient, function_: F, args: "skip" | PaginatedArgs<F>, options: PaginatedQueryOptions): PaginatedQueryHandle<PageItemOf<F>>;
 ```
 
 ### `presence` (function)
@@ -728,9 +716,9 @@ function presence<H extends HeartbeatReference, L extends ListPresentReference>(
 ### `query` (function)
 
 ```ts
-function query<F extends FunctionReference>(function_: F, args: ReactiveArgs<F>, options?: QueryStoreOptions): QueryStore<F>;
+function query<F extends FunctionReference>(function_: F, args: ArgsOf<F> | "skip", options?: QueryOptions): QueryHandle<F>;
 
-function query<F extends FunctionReference>(client: LunoraClient, function_: F, args: ReactiveArgs<F>, options?: QueryStoreOptions): QueryStore<F>;
+function query<F extends FunctionReference>(client: LunoraClient, function_: F, args: ArgsOf<F> | "skip", options?: QueryOptions): QueryHandle<F>;
 ```
 
 ### `rateLimit` (const)
@@ -748,17 +736,17 @@ const setLunoraClient: (client: LunoraClient) => LunoraClient;
 ### `stream` (function)
 
 ```ts
-function stream<F extends FunctionReference<"stream">>(function_: F, args: ArgsOf<F> | "skip", options?: StreamStoreOptions): StreamHandle<ReturnOf<F>>;
+function stream<F extends FunctionReference<"stream">>(function_: F, args: ArgsOf<F> | "skip", options?: StreamOptions): StreamHandle<ReturnOf<F>>;
 
-function stream<F extends FunctionReference<"stream">>(client: LunoraClient, function_: F, args: ArgsOf<F> | "skip", options?: StreamStoreOptions): StreamHandle<ReturnOf<F>>;
+function stream<F extends FunctionReference<"stream">>(client: LunoraClient, function_: F, args: ArgsOf<F> | "skip", options?: StreamOptions): StreamHandle<ReturnOf<F>>;
 ```
 
 ### `subscription` (function)
 
 ```ts
-function subscription<F extends FunctionReference>(function_: F, args: ReactiveArgs<F>, options?: SubscriptionStoreOptions): SubscriptionHandle<ReturnOf<F>>;
+function subscription<F extends FunctionReference>(function_: F, args: ArgsOf<F> | "skip", options?: SubscriptionOptions): SubscriptionHandle<ReturnOf<F>>;
 
-function subscription<F extends FunctionReference>(client: LunoraClient, function_: F, args: ReactiveArgs<F>, options?: SubscriptionStoreOptions): SubscriptionHandle<ReturnOf<F>>;
+function subscription<F extends FunctionReference>(client: LunoraClient, function_: F, args: ArgsOf<F> | "skip", options?: SubscriptionOptions): SubscriptionHandle<ReturnOf<F>>;
 ```
 
 ### `voiceAgent` (function)

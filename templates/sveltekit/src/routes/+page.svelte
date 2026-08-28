@@ -10,7 +10,7 @@
 
     // Default to "dark" during SSR so the server-rendered markup is stable, then
     // reconcile to the user's OS preference on mount — no hydration mismatch.
-    let theme: "dark" | "light" = "dark";
+    let theme = $state<"dark" | "light">("dark");
 
     onMount(() => {
         if (window.matchMedia("(prefers-color-scheme: light)").matches) {
@@ -30,7 +30,7 @@
         <div class="glow"></div>
     </div>
 
-    <button class="lw-toggle" type="button" aria-label="Toggle color theme" on:click={toggleTheme}>
+    <button class="lw-toggle" type="button" aria-label="Toggle color theme" onclick={toggleTheme}>
         {#if theme === "light"}
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
             <span>Ivory</span>

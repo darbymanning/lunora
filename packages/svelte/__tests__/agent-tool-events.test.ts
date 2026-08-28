@@ -1,11 +1,11 @@
 import type { FunctionReference } from "@lunora/client";
-import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
 
 import type { AgentLiveEvent } from "../src/agent-chat";
 import type { AgentToolEventsApi } from "../src/agent-tool-events";
 import { agentToolEvents } from "../src/agent-tool-events";
 import { createFakeClient } from "./fake-client";
+import { track } from "./track";
 
 const makeRef = (reference: string): FunctionReference => {
     return { __lunoraRef: reference };
@@ -33,12 +33,12 @@ describe(agentToolEvents, () => {
         const handle = agentToolEvents(fake.client, { api: buildApi(), threadKey: "t1" });
 
         // The store is lazy — the lone history channel opens on the first subscriber.
-        const unsubscribe = handle.events.subscribe(() => {});
+        const reader = track(() => handle.events);
 
         expect(fake.subscribeCalls.map((call) => call.functionPath)).toStrictEqual([MESSAGES_REF]);
         // With no `stream` reference the event stream is opened with `"skip"`, so no stream opens.
         expect(fake.streamCalls).toHaveLength(0);
-        expect(get(handle.events)).toStrictEqual([]);
+        expect(handle.events).toStrictEqual([]);
 
         fake.push(MESSAGES_REF, [
             { content: "hi", role: "user", seq: 0 },
@@ -47,14 +47,14 @@ describe(agentToolEvents, () => {
             { content: "awaiting approval", role: "tool", seq: 3, status: "awaiting_approval", toolCallId: "c2", toolName: "charge" },
         ]);
 
-        expect(get(handle.events)).toStrictEqual([
+        expect(handle.events).toStrictEqual([
             { input: { city: "Berlin" }, seq: 1, toolCallId: "c1", toolName: "getWeather", type: "call" },
             { output: "sunny", seq: 2, toolCallId: "c1", toolName: "getWeather", type: "result" },
             { seq: 3, toolCallId: "c2", toolName: "charge", type: "awaiting-approval" },
         ]);
 
         // Dropping the last subscriber tears the underlying subscription down.
-        unsubscribe();
+        reader.stop();
 
         expect(fake.unsubscribeSpy).toHaveBeenCalledTimes(1);
     });
@@ -63,7 +63,7 @@ describe(agentToolEvents, () => {
         const fake = createFakeClient();
         const handle = agentToolEvents(fake.client, { api: buildApi(), stream: makeStreamRef(STREAM_REF), threadKey: "t1" });
 
-        const unsubscribe = handle.events.subscribe(() => {});
+        const reader = track(() => handle.events);
 
         // Both the durable history subscription and the live event stream open.
         expect(fake.subscribeCalls.map((call) => call.functionPath)).toStrictEqual([MESSAGES_REF]);
@@ -76,38 +76,38 @@ describe(agentToolEvents, () => {
         fake.pushStream(STREAM_REF, { data: { step: "geocoding" }, kind: "progress", threadKey: "t1", toolCallId: "c1" });
         await fake.flush();
 
-        expect(get(handle.events)).toStrictEqual([
+        expect(handle.events).toStrictEqual([
             { input: { city: "Berlin" }, seq: 1, toolCallId: "c1", toolName: "getWeather", type: "call" },
             { data: { step: "geocoding" }, toolCallId: "c1", type: "progress" },
         ]);
 
-        unsubscribe();
+        reader.stop();
     });
 
     it("only surfaces progress for the observed thread", async () => {
         const fake = createFakeClient();
         const handle = agentToolEvents(fake.client, { api: buildApi(), stream: makeStreamRef(STREAM_REF), threadKey: "t1" });
 
-        const unsubscribe = handle.events.subscribe(() => {});
+        const reader = track(() => handle.events);
 
         // A progress event for a different thread is dropped; the observed thread's is kept.
         fake.pushStream(STREAM_REF, { data: { step: "other" }, kind: "progress", threadKey: "t2", toolCallId: "c9" });
         fake.pushStream(STREAM_REF, { data: { step: "mine" }, kind: "progress", threadKey: "t1", toolCallId: "c1" });
         await fake.flush();
 
-        expect(get(handle.events)).toStrictEqual([{ data: { step: "mine" }, toolCallId: "c1", type: "progress" }]);
+        expect(handle.events).toStrictEqual([{ data: { step: "mine" }, toolCallId: "c1", type: "progress" }]);
 
-        unsubscribe();
+        reader.stop();
     });
 
     it("forwards the history limit to agents:agentMessages", () => {
         const fake = createFakeClient();
         const handle = agentToolEvents(fake.client, { api: buildApi(), limit: 10, threadKey: "t1" });
 
-        const unsubscribe = handle.events.subscribe(() => {});
+        const reader = track(() => handle.events);
 
         expect(fake.subscribeCalls[0]?.args).toStrictEqual({ key: "t1", limit: 10 });
 
-        unsubscribe();
+        reader.stop();
     });
 });

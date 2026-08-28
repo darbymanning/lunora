@@ -1,13 +1,13 @@
 import type { ConnectionStatus, LunoraClient, Unsubscribe } from "@lunora/client";
-import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
 
 import { connectionStatus } from "../src/connection-status";
+import { flush, track } from "./track";
 
 /**
- * Minimal stand-in exposing just the connection-status surface the store
+ * Minimal stand-in exposing just the connection-status surface the handle
  * touches. Records listeners so a test can drive transitions and assert the
- * listener is released when the last subscriber goes away.
+ * listener is released when the last reader goes away.
  */
 const makeFake = (initial: ConnectionStatus) => {
     let current = initial;
@@ -38,33 +38,32 @@ const makeFake = (initial: ConnectionStatus) => {
 };
 
 describe(connectionStatus, () => {
-    it("emits the current status and every transition to subscribers", () => {
+    it("reports the current status and every transition to its readers", () => {
         const fake = makeFake("idle");
-        const store = connectionStatus(fake.client);
-        const seen: ConnectionStatus[] = [];
+        const handle = connectionStatus(fake.client);
 
-        const stop = store.subscribe((status) => {
-            seen.push(status);
-        });
+        const reader = track(() => handle.current);
 
-        // The readable start callback attached on first subscribe.
+        // The listener attached on the first tracked read.
         expect(fake.listenerCount()).toBe(1);
 
         fake.emit("connecting");
+        flush();
         fake.emit("connected");
+        flush();
 
-        expect(seen).toStrictEqual(["idle", "connecting", "connected"]);
+        expect(reader.seen).toStrictEqual<ConnectionStatus[]>(["idle", "connecting", "connected"]);
 
-        stop();
+        reader.stop();
 
-        // The last subscriber left → the listener is released.
+        // The last reader left → the listener is released.
         expect(fake.listenerCount()).toBe(0);
     });
 
-    it("reads the current status synchronously via get()", () => {
+    it("reports the current status on an untracked read, attaching no listener", () => {
         const fake = makeFake("connected");
-        const store = connectionStatus(fake.client);
 
-        expect(get(store)).toBe("connected");
+        expect(connectionStatus(fake.client).current).toBe("connected");
+        expect(fake.listenerCount()).toBe(0);
     });
 });

@@ -1,14 +1,12 @@
 import type { FunctionReference, LunoraClient, OptimisticMessage } from "@lunora/client";
 import { maxSeq, reconcileOptimistic } from "@lunora/client";
-import type { Readable } from "svelte/store";
-import { writable } from "svelte/store";
 
 import { isBrowser } from "../../../shared/is-browser";
 import type { AgentThreadRecord, AgentThreadStatus } from "./agent";
 import { isClient, NO_MUTATION_REF } from "./agent";
 import { getLunoraClient } from "./context";
 import { mutation } from "./mutation";
-import { stream } from "./stream";
+import { box } from "./reactive";
 
 /**
  * One persisted (or optimistic) thread message, as `agents:agentMessages`
@@ -150,22 +148,22 @@ interface AgentChatHandle {
      * no-op when no `cancel` mutation was supplied or no run is in flight.
      */
     cancel: () => Promise<void>;
-    /** Durable thread history (oldest first) plus any un-acknowledged optimistic user turns. Read with `$messages`. */
-    messages: Readable<ReadonlyArray<AgentChatMessage>>;
+    /** Durable thread history (oldest first) plus any un-acknowledged optimistic user turns. */
+    readonly messages: ReadonlyArray<AgentChatMessage>;
     /** Reject a paused human-in-the-loop tool call (optionally with a reason). */
     reject: (toolCallId: string, note?: string) => Promise<void>;
     /** Start (or continue) a run with a user message; extra args merge over `sendArgs`. Appends an optimistic user turn. */
     send: (input: string, args?: Record<string, unknown>) => Promise<void>;
-    /** The live thread status, or `undefined` before the thread exists. Read with `$status`. */
-    status: Readable<AgentThreadStatus | undefined>;
+    /** The live thread status, or `undefined` before the thread exists. */
+    readonly status: AgentThreadStatus | undefined;
 
     /**
      * The in-flight turn's streamed text — live-only, `""` once the turn persists
      * to `messages`. Populated when a `stream` reference is supplied (via the
-     * {@link stream} primitive); with no reference it stays `""` and the UI advances
-     * message-by-message from durable history. Read with `$streamingText`.
+     * `client.stream(...)`); with no reference it stays `""` and the UI advances
+     * message-by-message from durable history.
      */
-    streamingText: Readable<string>;
+    readonly streamingText: string;
 
     /**
      * Stop the live history + thread subscriptions (and the token stream, if any).
@@ -173,13 +171,6 @@ interface AgentChatHandle {
      */
     teardown: () => void;
 }
-
-/**
- * A placeholder stream reference so {@link stream} is opened unconditionally even
- * when the caller supplies no token stream. Paired with `"skip"` args, it never
- * opens a stream.
- */
-const NO_STREAM_REF: AgentTokenStreamReference = { __lunoraRef: "" };
 
 const createAgentChatHandle = (client: LunoraClient, options: AgentChatOptions): AgentChatHandle => {
     const { api, cancel: cancelReference, limit, send: sendReference, sendArgs, stream: streamReference, threadKey } = options;
@@ -189,7 +180,7 @@ const createAgentChatHandle = (client: LunoraClient, options: AgentChatOptions):
     const approvalMutation = mutation(client, api.agents.agentResolveApproval);
 
     // Latest server state kept in closures so the action closures read it
-    // synchronously; the stores below drive reactive reads.
+    // synchronously; the boxes below drive reactive reads.
     let latestThread: AgentThreadRecord | undefined;
     let durable: ReadonlyArray<AgentChatMessage> = [];
     let optimistic: ReadonlyArray<OptimisticMessage> = [];
@@ -199,17 +190,17 @@ const createAgentChatHandle = (client: LunoraClient, options: AgentChatOptions):
     // A monotonic id source for optimistic rows — handle-instance local.
     let nextId = 0;
 
-    const messagesStore = writable<ReadonlyArray<AgentChatMessage>>([]);
-    const statusStore = writable<AgentThreadStatus | undefined>();
-    const streamingTextStore = writable("");
+    const messagesBox = box<ReadonlyArray<AgentChatMessage>>([]);
+    const statusBox = box<AgentThreadStatus | undefined>(undefined);
+    const streamingTextBox = box("");
 
     // Merge durable history with the optimistic user turns the server hasn't
-    // acknowledged yet, and publish to the messages store.
+    // acknowledged yet, and publish it.
     const recompute = (): void => {
         const visible = reconcileOptimistic(optimistic, durable);
 
         if (visible.length === 0) {
-            messagesStore.set(durable);
+            messagesBox.set(durable);
 
             return;
         }
@@ -219,7 +210,7 @@ const createAgentChatHandle = (client: LunoraClient, options: AgentChatOptions):
         // an optimistic row's placeholder seq never collides with a real one.
         const maxDurableSeq = maxSeq(durable);
 
-        messagesStore.set([
+        messagesBox.set([
             ...durable,
             ...visible.map<AgentChatMessage>((pending, index) => {
                 return {
@@ -247,7 +238,7 @@ const createAgentChatHandle = (client: LunoraClient, options: AgentChatOptions):
             .map((delta) => delta.text)
             .join("");
 
-        streamingTextStore.set(text);
+        streamingTextBox.set(text);
     };
 
     // The subscriptions below are client-only side effects: a component's init
@@ -259,19 +250,47 @@ const createAgentChatHandle = (client: LunoraClient, options: AgentChatOptions):
     // `status`/`streamingText` stay at their inert initial values until the
     // component hydrates and `teardown` becomes a no-op.
 
-    // The token stream is optional: with no reference we pass the sentinel + "skip"
-    // so `stream` never opens a stream (and `streamingText` stays empty). Subscribed
-    // eagerly (matching the history/thread subscriptions) so the stream opens with
-    // the handle and closes on `teardown` — but only in the browser; `stream(...)`'s
-    // `chunks` store opens the underlying stream on its first subscriber, so calling
-    // it unconditionally here would open (and leak) a live stream during SSR too.
-    const streamArguments = streamReference === undefined ? "skip" : { key: threadKey };
-    const unsubscribeStream = isBrowser()
-        ? stream(client, streamReference ?? NO_STREAM_REF, streamArguments).chunks.subscribe((value) => {
-              liveEvents = value;
-              recomputeStreamingText();
-          })
-        : (): void => undefined;
+    // The token stream is optional and, unlike the lazy `stream` primitive, is
+    // consumed eagerly here so it opens with the handle and closes on `teardown`
+    // — matching the history/thread subscriptions. With no reference nothing is
+    // opened and `streamingText` stays `""`.
+    const openTokenStream = (): (() => void) => {
+        if (streamReference === undefined || !isBrowser()) {
+            return () => undefined;
+        }
+
+        const iterable = client.stream(streamReference, { key: threadKey });
+        let active = true;
+
+        // Consumed in a background IIFE so this stays synchronous; `cancel()` is
+        // what the teardown below uses to stop it.
+        (async () => {
+            try {
+                for await (const event of iterable) {
+                    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- `active` is flipped to `false` by the teardown closure between awaits; TS's static flow analysis can't see the async mutation, so this guard is real, not dead.
+                    if (!active) {
+                        return;
+                    }
+
+                    liveEvents = [...liveEvents, event];
+                    recomputeStreamingText();
+                }
+            } catch {
+                // The stream ended in error. `streamingText` keeps its last value
+                // and the durable history remains the source of truth — a token
+                // stream has no error channel of its own on this handle.
+            }
+        })().catch(() => {
+            // Unreachable: the IIFE's own try/catch swallows every rejection.
+        });
+
+        return () => {
+            active = false;
+            iterable.cancel();
+        };
+    };
+
+    const unsubscribeStream = openTokenStream();
 
     const historyArgs = limit === undefined ? { key: threadKey } : { key: threadKey, limit };
     const unsubscribeHistory = isBrowser()
@@ -284,7 +303,7 @@ const createAgentChatHandle = (client: LunoraClient, options: AgentChatOptions):
     const unsubscribeThread = isBrowser()
         ? client.subscribe(api.agents.agentThread, { key: threadKey }, (value) => {
               latestThread = value as AgentThreadRecord | undefined;
-              statusStore.set(latestThread?.status);
+              statusBox.set(latestThread?.status);
           })
         : (): void => undefined;
 
@@ -344,19 +363,23 @@ const createAgentChatHandle = (client: LunoraClient, options: AgentChatOptions):
     const teardown = (): void => {
         unsubscribeHistory();
         unsubscribeThread();
-        // Drops the last subscriber, so the stream store's stop callback cancels
-        // the underlying stream.
         unsubscribeStream();
     };
 
     return {
         approve,
         cancel,
-        messages: { subscribe: messagesStore.subscribe },
+        get messages() {
+            return messagesBox.current;
+        },
         reject,
         send,
-        status: { subscribe: statusStore.subscribe },
-        streamingText: { subscribe: streamingTextStore.subscribe },
+        get status() {
+            return statusBox.current;
+        },
+        get streamingText() {
+            return streamingTextBox.current;
+        },
         teardown,
     };
 };
@@ -364,14 +387,13 @@ const createAgentChatHandle = (client: LunoraClient, options: AgentChatOptions):
 /**
  * A first-class agent chat surface: live durable history + in-flight token
  * streaming + the send / approve / reject / cancel writes, keyed by `threadKey` —
- * the Svelte counterpart to React's `useAgentChat`, re-expressed as stores you
- * read with `$`.
+ * the Svelte counterpart to React's `useAgentChat`.
  *
  * It composes the existing primitives rather than adding transport:
  * `client.subscribe(api.agents.agentMessages)` for durable history,
  * `client.subscribe(api.agents.agentThread)` for live status + the in-flight
- * `instanceId`, {@link stream} over an app token stream for in-flight deltas, and
- * {@link mutation} for the writes (`api.agents.agentResolveApproval` for approvals;
+ * `instanceId`, `client.stream(...)` over an app token stream for in-flight
+ * deltas, and {@link mutation} for the writes (`api.agents.agentResolveApproval` for approvals;
  * app-defined wrappers for `send`/`cancel`). Only the `agents:*` surface is
  * hard-coded — `send`/`cancel`/`stream` stay generic references.
  *

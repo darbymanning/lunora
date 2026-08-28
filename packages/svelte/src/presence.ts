@@ -1,14 +1,13 @@
 import type { ArgsOf, FunctionReference, LunoraClient, ReturnOf } from "@lunora/client";
 import { onDestroy } from "svelte";
-import type { Readable } from "svelte/store";
-import { readable } from "svelte/store";
 
 import { isBrowser } from "../../../shared/is-browser";
 import { randomSessionId } from "../../../shared/random-session-id";
 import { getLunoraClient } from "./context";
+import { source } from "./reactive";
 
 /**
- * `presence` — collaborative-awareness stores, the client half of the
+ * `presence` — a collaborative-awareness handle, the client half of the
  * `@lunora/server` `definePresence` preset.
  *
  * Drives the heartbeat mutation (on call, interval, and tab re-focus) and
@@ -50,7 +49,7 @@ interface PresenceOptions<H extends HeartbeatReference, L extends ListPresentRef
 
 interface PresenceHandle<L extends ListPresentReference> {
     /** The present members for the room. `undefined` until the first push. */
-    present: Readable<ReturnOf<L> | undefined>;
+    readonly present: ReturnOf<L> | undefined;
     /** This handle's session id. */
     sessionId: string;
     /** Replace the awareness `data` sent with subsequent heartbeats, and heartbeat immediately. */
@@ -104,7 +103,7 @@ const createPresenceHandle = <H extends HeartbeatReference, L extends ListPresen
     // id, and the render scope never stops — so the auto-`onDestroy` below
     // never fires and every server render would leak a live `setInterval`
     // handle (SVELTE-01). Skip the whole client wiring server-side, mirroring
-    // `@lunora/vue`'s `use-presence.ts` guard; the returned store stays inert
+    // `@lunora/vue`'s `use-presence.ts` guard; the returned handle stays inert
     // until the component hydrates.
     if (isBrowser()) {
         sendHeartbeat();
@@ -116,30 +115,35 @@ const createPresenceHandle = <H extends HeartbeatReference, L extends ListPresen
 
         // Register connection context so server can drop the row on socket disconnect.
         // Use the refcounted acquire (not the last-writer-wins setter) so a second
-        // presence store on the same client/shard doesn't clobber this one's context
+        // presence handle on the same client/shard doesn't clobber this one's context
         // when either tears down.
         releaseConnectionContext = client.acquireConnectionContext({ roomId, sessionId }, { shardKey });
     }
 
-    // Subscribe to the live present-list; expose as a Readable store. Also
-    // gated: `readable`'s start callback only runs once the store gets its
-    // first subscriber, but a server-rendered page that reads `$present`
-    // during `renderToString` WOULD trigger it — so guard it too rather than
-    // open a live WS subscription server-side.
-    const present = readable<ReturnOf<L> | undefined>(undefined, (set) => {
-        if (!isBrowser()) {
-            return undefined;
-        }
+    // Subscribe to the live present-list. Also gated: the start callback only
+    // runs on a tracked read, but a server-rendered page that reads `present`
+    // inside an effect during `renderToString` WOULD trigger it — so guard it
+    // too rather than open a live WS subscription server-side.
+    let latestPresent: ReturnOf<L> | undefined;
 
-        return client.subscribe(
-            listPresent,
-            { roomId } as ArgsOf<L>,
-            (value) => {
-                set(value);
-            },
-            { shardKey },
-        );
-    });
+    const present = source<ReturnOf<L> | undefined>(
+        () => latestPresent,
+        (update) => {
+            if (!isBrowser()) {
+                return undefined;
+            }
+
+            return client.subscribe(
+                listPresent,
+                { roomId } as ArgsOf<L>,
+                (value) => {
+                    latestPresent = value;
+                    update();
+                },
+                { shardKey },
+            );
+        },
+    );
 
     let torndown = false;
 
@@ -175,7 +179,14 @@ const createPresenceHandle = <H extends HeartbeatReference, L extends ListPresen
         // Not inside a component's init: the caller owns teardown.
     }
 
-    return { present, sessionId, setData, teardown };
+    return {
+        get present() {
+            return present.current;
+        },
+        sessionId,
+        setData,
+        teardown,
+    };
 };
 
 /**

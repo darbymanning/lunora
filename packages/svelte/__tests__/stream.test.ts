@@ -1,10 +1,10 @@
 import type { FunctionReference } from "@lunora/client";
-import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
 
 import type { StreamHandle } from "../src/stream";
 import { stream } from "../src/stream";
 import { createFakeClient } from "./fake-client";
+import { track } from "./track";
 
 const makeStreamRef = (reference: string): FunctionReference<"stream"> => {
     return { __lunoraRef: reference };
@@ -13,48 +13,48 @@ const makeStreamRef = (reference: string): FunctionReference<"stream"> => {
 const TICK_REF = "metrics:tick";
 
 describe(stream, () => {
-    it("opens a stream on the first chunks subscriber and appends chunks as they arrive", async () => {
+    it("opens a stream on the first tracked read and appends chunks as they arrive", async () => {
         const fake = createFakeClient();
         const handle: StreamHandle<unknown> = stream(fake.client, makeStreamRef(TICK_REF), { since: 0 });
 
-        // The `chunks` store is lazy — the stream opens on its first subscriber.
-        const stop = handle.chunks.subscribe(() => {});
+        // The handle is lazy — the stream opens on the first tracked read.
+        const reader = track(() => handle.chunks);
 
         expect(fake.streamCalls.map((call) => call.functionPath)).toStrictEqual([TICK_REF]);
-        expect(get(handle.status)).toBe("streaming");
+        expect(handle.status).toBe("streaming");
 
         fake.pushStream(TICK_REF, { tick: 1 });
         fake.pushStream(TICK_REF, { tick: 2 });
         await fake.flush();
 
-        expect(get(handle.chunks)).toStrictEqual([{ tick: 1 }, { tick: 2 }]);
+        expect(handle.chunks).toStrictEqual([{ tick: 1 }, { tick: 2 }]);
 
         fake.streamCalls[0]?.handle.complete();
         await fake.flush();
 
-        expect(get(handle.status)).toBe("complete");
+        expect(handle.status).toBe("complete");
 
-        stop();
+        reader.stop();
     });
 
-    it("'skip' keeps the stores connected without opening a stream", () => {
+    it("'skip' keeps the handle usable without opening a stream", () => {
         const fake = createFakeClient();
         const handle = stream(fake.client, makeStreamRef(TICK_REF), "skip");
 
-        const stop = handle.chunks.subscribe(() => {});
+        const reader = track(() => handle.chunks);
 
         expect(fake.streamCalls).toHaveLength(0);
-        expect(get(handle.status)).toBe("idle");
-        expect(get(handle.chunks)).toStrictEqual([]);
+        expect(handle.status).toBe("idle");
+        expect(handle.chunks).toStrictEqual([]);
 
-        stop();
+        reader.stop();
     });
 
     it("cancels the in-flight iterator on teardown", () => {
         const fake = createFakeClient();
         const handle = stream(fake.client, makeStreamRef(TICK_REF), { since: 0 });
 
-        const stop = handle.chunks.subscribe(() => {});
+        const reader = track(() => handle.chunks);
 
         expect(fake.streamCalls).toHaveLength(1);
 
@@ -62,18 +62,18 @@ describe(stream, () => {
 
         expect(fake.streamCalls[0]?.onCancel).toHaveBeenCalledWith();
 
-        stop();
+        reader.stop();
     });
 
-    it("cancels the in-flight iterator when the last chunks subscriber detaches", () => {
+    it("cancels the in-flight iterator when the last reader detaches", () => {
         const fake = createFakeClient();
         const handle = stream(fake.client, makeStreamRef(TICK_REF), { since: 0 });
 
-        const stop = handle.chunks.subscribe(() => {});
+        const reader = track(() => handle.chunks);
 
         expect(fake.streamCalls).toHaveLength(1);
 
-        stop();
+        reader.stop();
 
         expect(fake.streamCalls[0]?.onCancel).toHaveBeenCalledWith();
     });
@@ -82,14 +82,14 @@ describe(stream, () => {
         const fake = createFakeClient();
         const handle = stream(fake.client, makeStreamRef(TICK_REF), { since: 0 });
 
-        const stop = handle.chunks.subscribe(() => {});
+        const reader = track(() => handle.chunks);
 
         fake.streamCalls[0]?.handle.fail(new Error("forbidden"));
         await fake.flush();
 
-        expect(get(handle.status)).toBe("error");
-        expect(get(handle.error)?.message).toBe("forbidden");
+        expect(handle.status).toBe("error");
+        expect(handle.error?.message).toBe("forbidden");
 
-        stop();
+        reader.stop();
     });
 });

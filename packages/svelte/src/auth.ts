@@ -1,88 +1,95 @@
 import type { User } from "@lunora/client";
 import { getIdentityStore } from "@lunora/client/auth";
-import type { Readable } from "svelte/store";
-import { derived, readable } from "svelte/store";
 
 import { getLunoraClient } from "./context";
+import { source } from "./reactive";
 
-interface AuthStore {
+interface AuthHandle {
     /** Set the auth token on the underlying `LunoraClient`. */
     setToken: (token: string | null) => void;
-    /** Readable store of the auth token (`null` when signed out). */
-    token: Readable<string | null>;
-    /** Readable store of the resolved user (`null` when signed out or still loading). */
-    user: Readable<User | null>;
+    /** The auth token (`null` when signed out). */
+    readonly token: string | null;
+    /** The resolved user (`null` when signed out or still loading). */
+    readonly user: User | null;
 }
 
 /**
- * Create a pair of Svelte readable stores tracking the auth token and the
- * resolved user identity. The stores are lazy: subscriptions open on the first
- * reader and close when the last unsubscribes. Calling `setToken(jwt)` after
- * sign-in refreshes both stores.
+ * Track the auth token and the resolved user identity. Both are lazy: the
+ * listeners attach on the first tracked read and detach once every effect that
+ * read them is destroyed. Calling `setToken(jwt)` after sign-in refreshes both.
+ *
+ * Read `token`/`user` off the handle rather than destructuring, or the value is
+ * snapshotted and never updates.
  *
  * Pass an explicit client to bypass the ambient context (useful in tests).
  */
-const auth = (explicitClient?: ReturnType<typeof getLunoraClient>): AuthStore => {
+const auth = (explicitClient?: ReturnType<typeof getLunoraClient>): AuthHandle => {
     const client = explicitClient ?? getLunoraClient();
     const store = getIdentityStore(client);
 
-    const token = readable<string | null>(client.getAuthToken(), (set) => {
-        set(client.getAuthToken());
+    const token = source<string | null>(
+        () => client.getAuthToken(),
+        (update) => client.onAuthTokenChange(update),
+    );
 
-        return client.onAuthTokenChange((next) => {
-            set(next);
-        });
-    });
-
-    const user = readable<User | null>(store.getUser(), (set) => {
-        set(store.getUser());
-
-        return store.subscribe(() => {
-            set(store.getUser());
-        });
-    });
+    const user = source<User | null>(
+        () => store.getUser(),
+        (update) => store.subscribe(update),
+    );
 
     const setToken = (next: string | null): void => {
         client.setAuthToken(next);
     };
 
-    return { setToken, token, user };
+    return {
+        setToken,
+        get token() {
+            return token.current;
+        },
+        get user() {
+            return user.current;
+        },
+    };
 };
 
-/** Derived auth-gate stores for template gating (`{#if $isAuthenticated}`), built on {@link auth}. */
-interface AuthGateStore {
-    /** Readable store, `true` once a token is set and the user has resolved. */
-    isAuthenticated: Readable<boolean>;
+/** Auth-gate booleans for template gating (`{#if gate.isAuthenticated}`), built on {@link auth}. */
+interface AuthGateHandle {
+    /** `true` once a token is set and the user has resolved. */
+    readonly isAuthenticated: boolean;
 
-    /** Readable store, `true` while a token is set but the user hasn't resolved yet. */
-    isLoading: Readable<boolean>;
+    /** `true` while a token is set but the user hasn't resolved yet. */
+    readonly isLoading: boolean;
 }
 
 /**
- * Derived auth-gate stores built on {@link auth}. Svelte has no JSX-style
+ * Auth-gate booleans built on {@link auth}. Svelte has no JSX-style
  * `Authenticated` slot component the way React/Vue/Solid do (this package is
- * plain `.ts` over stores — no `.svelte` component compiler required), so this
- * exposes the same three-state logic as two boolean stores instead: a token
- * with no resolved user yet is `isLoading`; a token with a resolved user is
- * `isAuthenticated`; no token is neither (the signed-out state a template
- * checks for with a plain `{:else}`).
+ * plain `.ts` — no `.svelte` component compiler required), so this exposes the
+ * same three-state logic as two booleans instead: a token with no resolved user
+ * yet is `isLoading`; a token with a resolved user is `isAuthenticated`; no
+ * token is neither (the signed-out state a template checks for with a plain
+ * `{:else}`).
  *
  * ```ts
  * import { authGate } from "@lunora/svelte";
- * const { isAuthenticated, isLoading } = authGate();
- * // markup: {#if $isAuthenticated} signed in {:else if $isLoading} loading… {:else} signed out {/if}
+ * const gate = authGate();
+ * // markup: {#if gate.isAuthenticated} signed in {:else if gate.isLoading} loading… {:else} signed out {/if}
  * ```
  *
  * Pass an explicit client to bypass the ambient context (useful in tests).
  */
-const authGate = (explicitClient?: ReturnType<typeof getLunoraClient>): AuthGateStore => {
-    const { token, user } = auth(explicitClient);
+const authGate = (explicitClient?: ReturnType<typeof getLunoraClient>): AuthGateHandle => {
+    const handle = auth(explicitClient);
 
-    const isLoading = derived([token, user], ([$token, $user]) => $token !== null && $user === null);
-    const isAuthenticated = derived([token, user], ([$token, $user]) => $token !== null && $user !== null);
-
-    return { isAuthenticated, isLoading };
+    return {
+        get isAuthenticated() {
+            return handle.token !== null && handle.user !== null;
+        },
+        get isLoading() {
+            return handle.token !== null && handle.user === null;
+        },
+    };
 };
 
-export type { AuthGateStore, AuthStore };
+export type { AuthGateHandle, AuthHandle };
 export { auth, authGate };

@@ -1,8 +1,8 @@
 import type { FunctionReference, LunoraClient } from "@lunora/client";
-import { get, writable } from "svelte/store";
 import { describe, expect, it, vi } from "vitest";
 
 import { subscription } from "../src/subscription";
+import { flush, track } from "./track";
 
 const fnRef = { __lunoraRef: "messages:subscribe" } as unknown as FunctionReference;
 const args = { channelId: "c1" } as unknown;
@@ -32,162 +32,124 @@ const createFakeClient = () => {
     };
 };
 
-describe("subscription store", () => {
+describe(subscription, () => {
     it("data is undefined before any push", () => {
         const { client } = createFakeClient();
-        const { data } = subscription(client, fnRef, args);
+        const handle = subscription(client, fnRef, args);
 
-        // data store is lazy — no subscription until first subscriber
-        const stop = data.subscribe(() => {});
+        // The handle is lazy — no subscription until the first tracked read.
+        const reader = track(() => handle.data);
 
-        expect(get(data)).toBeUndefined();
+        expect(handle.data).toBeUndefined();
 
-        stop();
+        reader.stop();
     });
 
-    it("opens subscription on first data subscriber and closes on stop", () => {
+    it("opens the subscription on the first tracked read and closes it when the last reader leaves", () => {
         const { client, subscribeSpy, unsubscribeSpy } = createFakeClient();
-        const { data } = subscription(client, fnRef, args, { shardKey: "c1" });
+        const handle = subscription(client, fnRef, args, { shardKey: "c1" });
 
-        const stop = data.subscribe(() => {});
+        const reader = track(() => handle.data);
 
         expect(subscribeSpy).toHaveBeenCalledTimes(1);
 
-        stop();
+        reader.stop();
 
         expect(unsubscribeSpy).toHaveBeenCalledTimes(1);
     });
 
-    it("delivers server pushes to data store", () => {
+    it("delivers server pushes to readers of data", () => {
         const { client, emit } = createFakeClient();
-        const { data } = subscription(client, fnRef, args);
+        const handle = subscription(client, fnRef, args);
 
-        const seen: unknown[] = [];
-        const stop = data.subscribe((v) => seen.push(v));
+        const reader = track(() => handle.data);
 
         emit([{ id: "1" }]);
+        flush();
         emit([{ id: "1" }, { id: "2" }]);
+        flush();
 
-        expect(seen).toStrictEqual([undefined, [{ id: "1" }], [{ id: "1" }, { id: "2" }]]);
+        expect(reader.seen).toStrictEqual([undefined, [{ id: "1" }], [{ id: "1" }, { id: "2" }]]);
 
-        stop();
+        reader.stop();
     });
 
     it("opens no subscription when args is 'skip'", () => {
         const { client, subscribeSpy } = createFakeClient();
-        const { data } = subscription(client, fnRef, "skip");
+        const handle = subscription(client, fnRef, "skip");
 
-        const stop = data.subscribe(() => {});
+        const reader = track(() => handle.data);
 
         expect(subscribeSpy).not.toHaveBeenCalled();
 
-        stop();
+        reader.stop();
     });
 
     it("routes a subscription error into the error store and the onError callback", () => {
         const { client, emitError } = createFakeClient();
         const onError = vi.fn<(error: Error) => void>();
-        const { data, error } = subscription(client, fnRef, args, { onError });
+        const handle = subscription(client, fnRef, args, { onError });
 
         // Subscribe both stores so the data store's start callback wires onError.
-        const stopData = data.subscribe(() => {});
-        const stopError = error.subscribe(() => {});
+        const dataReader = track(() => handle.data);
+        const errorReader = track(() => handle.error);
 
         emitError("boom");
 
         expect(onError).toHaveBeenCalledTimes(1);
         expect(onError.mock.calls[0]?.[0]).toBeInstanceOf(Error);
 
-        const captured = get(error);
+        const captured = handle.error;
 
         expect(captured).toBeInstanceOf(Error);
         expect(captured?.message).toBe("boom");
 
-        stopData();
-        stopError();
+        dataReader.stop();
+        errorReader.stop();
     });
 
     it("clears the error store once a healthy value arrives after an error", () => {
         const { client, emit, emitError } = createFakeClient();
-        const { data, error } = subscription(client, fnRef, args);
+        const handle = subscription(client, fnRef, args);
 
-        const stopData = data.subscribe(() => {});
-        const stopError = error.subscribe(() => {});
+        const dataReader = track(() => handle.data);
+        const errorReader = track(() => handle.error);
 
         emitError("transient");
 
-        expect(get(error)).toBeInstanceOf(Error);
+        expect(handle.error).toBeInstanceOf(Error);
 
         emit([{ id: "1" }]);
 
         // A fresh server value marks the subscription healthy again.
-        expect(get(error)).toBeUndefined();
-        expect(get(data)).toStrictEqual([{ id: "1" }]);
+        expect(handle.error).toBeUndefined();
+        expect(handle.data).toStrictEqual([{ id: "1" }]);
 
-        stopData();
-        stopError();
+        dataReader.stop();
+        errorReader.stop();
     });
 
-    it("resets the error store when the last data subscriber detaches", () => {
+    it("holds the error while any reader remains, and clears it once the last one detaches", () => {
         const { client, emitError } = createFakeClient();
-        const { data, error } = subscription(client, fnRef, args);
+        const handle = subscription(client, fnRef, args);
 
-        const stopData = data.subscribe(() => {});
-        const stopError = error.subscribe(() => {});
+        const dataReader = track(() => handle.data);
+        const errorReader = track(() => handle.error);
 
         emitError("boom");
 
-        expect(get(error)).toBeInstanceOf(Error);
+        expect(handle.error).toBeInstanceOf(Error);
 
-        // Tearing down the data subscription clears the captured error.
-        stopData();
+        // `data` and `error` share one subscription, so dropping one reader does
+        // not tear it down — the error is still the live state of the channel.
+        dataReader.stop();
 
-        expect(get(error)).toBeUndefined();
+        expect(handle.error).toBeInstanceOf(Error);
 
-        stopError();
-    });
-});
+        // The last reader leaving closes the subscription and clears the error,
+        // so a later read re-opens from a clean slate.
+        errorReader.stop();
 
-describe("subscription store with reactive args", () => {
-    it("re-subscribes with the new args when the args store emits", () => {
-        const { client, subscribeSpy, unsubscribeSpy } = createFakeClient();
-        const argsStore = writable<unknown>({ channelId: "c1" });
-        const { data } = subscription(client, fnRef, argsStore);
-
-        const stop = data.subscribe(() => {});
-
-        expect(subscribeSpy).toHaveBeenCalledTimes(1);
-        expect(subscribeSpy.mock.calls[0]?.[1]).toStrictEqual({ channelId: "c1" });
-
-        argsStore.set({ channelId: "c2" });
-
-        // The previous subscription is torn down before the new one opens.
-        expect(unsubscribeSpy).toHaveBeenCalledTimes(1);
-        expect(subscribeSpy).toHaveBeenCalledTimes(2);
-        expect(subscribeSpy.mock.calls[1]?.[1]).toStrictEqual({ channelId: "c2" });
-
-        stop();
-
-        expect(unsubscribeSpy).toHaveBeenCalledTimes(2);
-    });
-
-    it("tears down and clears data on a 'skip' emission", () => {
-        const { client, emit, subscribeSpy, unsubscribeSpy } = createFakeClient();
-        const argsStore = writable<unknown>({ channelId: "c1" });
-        const { data } = subscription(client, fnRef, argsStore);
-
-        const stop = data.subscribe(() => {});
-
-        emit({ unread: 3 });
-
-        expect(get(data)).toStrictEqual({ unread: 3 });
-
-        argsStore.set("skip");
-
-        expect(unsubscribeSpy).toHaveBeenCalledTimes(1);
-        expect(subscribeSpy).toHaveBeenCalledTimes(1);
-        expect(get(data)).toBeUndefined();
-
-        stop();
+        expect(handle.error).toBeUndefined();
     });
 });

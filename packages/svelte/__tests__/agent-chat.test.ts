@@ -1,5 +1,4 @@
 import type { FunctionReference } from "@lunora/client";
-import { get } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { AgentChatApi, AgentLiveEvent } from "../src/agent-chat";
@@ -51,20 +50,20 @@ describe(agentChat, () => {
 
         // Both the history and thread channels open eagerly on setup.
         expect(fake.subscribeCalls.map((call) => call.functionPath).toSorted((a, b) => a.localeCompare(b))).toStrictEqual([MESSAGES_REF, THREAD_REF]);
-        expect(get(handle.messages)).toStrictEqual([]);
-        expect(get(handle.status)).toBeUndefined();
+        expect(handle.messages).toStrictEqual([]);
+        expect(handle.status).toBeUndefined();
         // With no `stream` reference the token stream is opened with `"skip"` args,
         // so no stream is opened and `streamingText` stays empty.
         expect(fake.streamCalls).toHaveLength(0);
-        expect(get(handle.streamingText)).toBe("");
+        expect(handle.streamingText).toBe("");
 
         fake.push(THREAD_REF, { instanceId: "wf-1", status: "running" });
 
-        expect(get(handle.status)).toBe("running");
+        expect(handle.status).toBe("running");
 
         fake.push(MESSAGES_REF, [{ content: "hi", role: "user", seq: 0 }]);
 
-        expect(get(handle.messages)).toStrictEqual([{ content: "hi", role: "user", seq: 0 }]);
+        expect(handle.messages).toStrictEqual([{ content: "hi", role: "user", seq: 0 }]);
 
         handle.teardown();
 
@@ -89,13 +88,13 @@ describe(agentChat, () => {
         fake.pushStream(STREAM_REF, { data: { pct: 50 }, kind: "progress", threadKey: "t1", toolCallId: "c1" });
         await fake.flush();
 
-        expect(get(handle.streamingText)).toBe("Hello");
+        expect(handle.streamingText).toBe("Hello");
 
         // The turn persists → its assistant row advances the retire gate and the
         // deltas fall away, leaving the persisted message the source of truth.
         fake.push(MESSAGES_REF, [{ content: "Hello", role: "assistant", seq: 0 }]);
 
-        expect(get(handle.streamingText)).toBe("");
+        expect(handle.streamingText).toBe("");
 
         handle.teardown();
     });
@@ -107,12 +106,12 @@ describe(agentChat, () => {
         await handle.send("hello there");
 
         expect(fake.mutationSpy).toHaveBeenCalledWith(expect.objectContaining({ __lunoraRef: SEND_REF }), { input: "hello there", threadKey: "t1" }, undefined);
-        expect(get(handle.messages)).toStrictEqual([{ content: "hello there", optimistic: true, role: "user", seq: 0 }]);
+        expect(handle.messages).toStrictEqual([{ content: "hello there", optimistic: true, role: "user", seq: 0 }]);
 
         // The durable turn lands → the optimistic row is reconciled away.
         fake.push(MESSAGES_REF, [{ content: "hello there", role: "user", seq: 0 }]);
 
-        expect(get(handle.messages)).toStrictEqual([{ content: "hello there", role: "user", seq: 0 }]);
+        expect(handle.messages).toStrictEqual([{ content: "hello there", role: "user", seq: 0 }]);
 
         handle.teardown();
     });
@@ -126,14 +125,14 @@ describe(agentChat, () => {
 
         fake.push(MESSAGES_REF, [{ content: "hi", role: "user", seq: 0 }]);
 
-        expect(get(handle.messages)).toStrictEqual([{ content: "hi", role: "user", seq: 0 }]);
+        expect(handle.messages).toStrictEqual([{ content: "hi", role: "user", seq: 0 }]);
 
         // Sending "hi" again must NOT be immediately swallowed by the stale durable
         // "hi" that predates this send — the optimistic echo should render until
         // ITS OWN durable row arrives.
         await handle.send("hi");
 
-        expect(get(handle.messages)).toStrictEqual([
+        expect(handle.messages).toStrictEqual([
             { content: "hi", role: "user", seq: 0 },
             { content: "hi", optimistic: true, role: "user", seq: 1 },
         ]);
@@ -144,7 +143,7 @@ describe(agentChat, () => {
             { content: "hi", role: "user", seq: 1 },
         ]);
 
-        expect(get(handle.messages)).toStrictEqual([
+        expect(handle.messages).toStrictEqual([
             { content: "hi", role: "user", seq: 0 },
             { content: "hi", role: "user", seq: 1 },
         ]);
@@ -172,7 +171,7 @@ describe(agentChat, () => {
         // Send a new turn — its optimistic row renders atop the saturated window.
         await handle.send("new turn");
 
-        expect(get(handle.messages).at(-1)).toStrictEqual({ content: "new turn", optimistic: true, role: "user", seq: 50 });
+        expect(handle.messages.at(-1)).toStrictEqual({ content: "new turn", optimistic: true, role: "user", seq: 50 });
 
         // The turn lands (user seq 50 + assistant seq 51) and the window slides to
         // keep its last 50 rows, evicting the oldest turn (seqs 0, 1). The durable
@@ -184,7 +183,7 @@ describe(agentChat, () => {
 
         fake.push(MESSAGES_REF, slidWindow);
 
-        const reconciled = get(handle.messages);
+        const reconciled = handle.messages;
 
         // No ghost: "new turn" appears exactly once, as the durable row, never
         // flagged optimistic — and the merged list is just the 50-row window.
@@ -251,8 +250,8 @@ describe(agentChat, () => {
         const handle = agentChat(fake.client, { api: buildApi(), send: makeRef(SEND_REF) as FunctionReference<"mutation">, threadKey: "t1" });
 
         expect(fake.subscribeCalls).toHaveLength(0);
-        expect(get(handle.messages)).toStrictEqual([]);
-        expect(get(handle.status)).toBeUndefined();
+        expect(handle.messages).toStrictEqual([]);
+        expect(handle.status).toBeUndefined();
 
         // Teardown itself must not throw with nothing live to unsubscribe.
         expect(() => {
@@ -279,7 +278,7 @@ describe(agentChat, () => {
         });
 
         expect(fake.streamCalls).toHaveLength(0);
-        expect(get(handle.streamingText)).toBe("");
+        expect(handle.streamingText).toBe("");
 
         expect(() => {
             handle.teardown();
