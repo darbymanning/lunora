@@ -1,10 +1,9 @@
 import type { FunctionReference, LunoraClient } from "@lunora/client";
-import type { Readable } from "svelte/store";
-import { writable } from "svelte/store";
 
 import { isBrowser } from "../../../shared/is-browser";
 import { getLunoraClient } from "./context";
 import { mutation } from "./mutation";
+import { box } from "./reactive";
 
 /**
  * The lifecycle status stored on an agent thread. Client-safe mirror of
@@ -76,20 +75,20 @@ interface AgentHandle {
      * no-op when no `cancel` mutation was supplied or no run is in flight.
      */
     cancel: () => Promise<void>;
-    /** `true` while a `run` invocation is in flight. Read with `$pending`. */
-    pending: Readable<boolean>;
+    /** `true` while a `run` invocation is in flight. */
+    readonly pending: boolean;
     /** Start (or continue) a run with a user message; extra args merge over `runArgs`. */
     run: (input: string, args?: Record<string, unknown>) => Promise<void>;
-    /** The live thread status, or `undefined` before the thread exists. Read with `$status`. */
-    status: Readable<AgentThreadStatus | undefined>;
+    /** The live thread status, or `undefined` before the thread exists. */
+    readonly status: AgentThreadStatus | undefined;
 
     /**
      * Stop the live thread subscription. Call in `onDestroy`
      * (`onDestroy(handle.teardown)`).
      */
     teardown: () => void;
-    /** The live thread record (status, `instanceId`, …), or `undefined` before it exists. Read with `$thread`. */
-    thread: Readable<AgentThreadRecord | undefined>;
+    /** The live thread record (status, `instanceId`, …), or `undefined` before it exists. */
+    readonly thread: AgentThreadRecord | undefined;
 }
 
 /**
@@ -111,10 +110,10 @@ const createAgentHandle = (client: LunoraClient, options: AgentOptions): AgentHa
     const cancelMutation = mutation(client, cancelReference ?? NO_MUTATION_REF);
 
     // Keep the latest thread in a closure so the action closures below read the
-    // in-flight `instanceId` synchronously (the store is for reactive reads).
+    // in-flight `instanceId` synchronously (the boxes are for reactive reads).
     let latestThread: AgentThreadRecord | undefined;
-    const threadStore = writable<AgentThreadRecord | undefined>();
-    const statusStore = writable<AgentThreadStatus | undefined>();
+    const threadBox = box<AgentThreadRecord | undefined>(undefined);
+    const statusBox = box<AgentThreadStatus | undefined>(undefined);
 
     // Client-only: a component's init can run server-side (this package pairs
     // with `@lunora/nuxt`'s server rendering) with no `window`, and opening a
@@ -125,8 +124,8 @@ const createAgentHandle = (client: LunoraClient, options: AgentOptions): AgentHa
     const unsubscribe = isBrowser()
         ? client.subscribe(api.agents.agentThread, { key: threadKey }, (value) => {
               latestThread = value as AgentThreadRecord | undefined;
-              threadStore.set(latestThread);
-              statusStore.set(latestThread?.status);
+              threadBox.set(latestThread);
+              statusBox.set(latestThread?.status);
           })
         : (): void => undefined;
 
@@ -151,18 +150,24 @@ const createAgentHandle = (client: LunoraClient, options: AgentOptions): AgentHa
 
     return {
         cancel,
-        pending: runMutation.pending,
+        get pending() {
+            return runMutation.pending;
+        },
         run,
-        status: { subscribe: statusStore.subscribe },
+        get status() {
+            return statusBox.current;
+        },
         teardown,
-        thread: { subscribe: threadStore.subscribe },
+        get thread() {
+            return threadBox.current;
+        },
     };
 };
 
 /**
  * A thin agent handle: live thread `status` plus `run` / `cancel`, without the
  * chat message surface — the Svelte counterpart to React's `useAgent`,
- * re-expressed as stores you read with `$`. Composes `client.subscribe` for live
+ * Composes `client.subscribe` for live
  * thread state and {@link mutation} for the run/cancel writes. For the full
  * conversation surface (durable history + approvals) use `agentChat`.
  *

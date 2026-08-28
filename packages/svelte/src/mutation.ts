@@ -1,21 +1,20 @@
 import type { ArgsOf, FunctionReference, LunoraClient, MutationCallOptions, ReturnOf } from "@lunora/client";
 import { createCallRunner } from "@lunora/client";
-import type { Readable } from "svelte/store";
-import { writable } from "svelte/store";
 
 import { getLunoraClient } from "./context";
+import { box } from "./reactive";
 
 /**
  * The reactive handle returned by {@link mutation} — the Svelte counterpart to
- * React's `useMutation`, re-expressed as stores you read with `$`. The surface
- * is identical across the Lunora adapters (`@lunora/solid`, `/vue`):
- * `data`/`error`/`pending` are readable stores and `mutate` is an awaitable.
+ * React's `useMutation`. `data`/`error`/`pending` are reactive getters: read
+ * them off the handle (`send.pending`) rather than destructuring, or the value
+ * is snapshotted and never updates.
  */
 export interface MutationHandle<F extends FunctionReference> {
     /** The latest invocation's resolved value, or `undefined` before the first success. */
-    data: Readable<ReturnOf<F> | undefined>;
+    readonly data: ReturnOf<F> | undefined;
     /** The latest invocation's error, or `undefined`. */
-    error: Readable<Error | undefined>;
+    readonly error: Error | undefined;
 
     /**
      * Run the mutation. Resolves with the server result and rejects on failure
@@ -28,20 +27,18 @@ export interface MutationHandle<F extends FunctionReference> {
     /**
      * `true` while any invocation from this handle is in flight. Ref-counted, so
      * overlapping calls compose and it only flips back to `false` once the last
-     * one settles. Read it with `$pending` in a component to disable a button.
+     * one settles — read it to disable a button.
      */
-    pending: Readable<boolean>;
+    readonly pending: boolean;
     /** Clear `data`/`error` back to idle. */
     reset: () => void;
 }
 
 /**
  * Create an optimistic {@link MutationHandle} for a mutation reference. The
- * Svelte counterpart to React's `useMutation`: returns
- * `{ data, error, pending, mutate, reset }` of readable stores plus an awaitable
- * `mutate`. The ref-counted pending + error-normalize orchestration is the
- * shared `createCallRunner` from `@lunora/client`; only the stores are
- * adapter-specific.
+ * Svelte counterpart to React's `useMutation`. The ref-counted pending +
+ * error-normalize orchestration is the shared `createCallRunner` from
+ * `@lunora/client`; only the reactive state is adapter-specific.
  *
  * `data`/`error` follow the adapter-wide contract: both track the LATEST
  * invocation (an earlier call settling later cannot clobber a newer one), a
@@ -58,9 +55,9 @@ export function mutation<F extends FunctionReference>(clientOrFunction: LunoraCl
     const client = hasExplicitClient ? (clientOrFunction as LunoraClient) : getLunoraClient();
     const functionRef = (hasExplicitClient ? maybeFunction : clientOrFunction) as F;
 
-    const data = writable<ReturnOf<F> | undefined>();
-    const error = writable<Error | undefined>();
-    const pending = writable(false);
+    const data = box<ReturnOf<F> | undefined>(undefined);
+    const error = box<Error | undefined>(undefined);
+    const pending = box(false);
 
     const mutate = createCallRunner(
         (args: ArgsOf<F>, options?: MutationCallOptions<unknown, unknown, ArgsOf<F>>) => client.mutation(functionRef, args, options),
@@ -83,5 +80,17 @@ export function mutation<F extends FunctionReference>(clientOrFunction: LunoraCl
         error.set(undefined);
     };
 
-    return { data, error, mutate, pending, reset };
+    return {
+        get data() {
+            return data.current;
+        },
+        get error() {
+            return error.current;
+        },
+        mutate,
+        get pending() {
+            return pending.current;
+        },
+        reset,
+    };
 }

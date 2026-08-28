@@ -1,8 +1,8 @@
 import type { LunoraClient, Preloaded } from "@lunora/client";
-import { get } from "svelte/store";
 import { describe, expect, it, vi } from "vitest";
 
 import { hydratePreloaded } from "../src/hydrate-preloaded";
+import { flush, track } from "./track";
 
 /**
  * A minimal stand-in for the parts of `LunoraClient` the adapter touches.
@@ -47,41 +47,39 @@ describe(hydratePreloaded, () => {
         const { client } = createFakeClient();
         const preloaded = makePreloaded([{ id: 1, text: "hello" }]);
 
-        const store = hydratePreloaded(preloaded, client);
-
-        // `get` reads the store synchronously — the seeded value must be there
+        // An untracked read is synchronous — the seeded value must be there
         // immediately, before any microtask or subscription callback runs.
-        expect(get(store)).toStrictEqual([{ id: 1, text: "hello" }]);
+        expect(hydratePreloaded(preloaded, client).current).toStrictEqual([{ id: 1, text: "hello" }]);
     });
 
-    it("does not open a subscription until the store is read/subscribed", () => {
+    it("does not open a subscription for an untracked read (the SSR path)", () => {
         const { client, subscribe } = createFakeClient();
 
-        hydratePreloaded(makePreloaded("seed"), client);
+        expect(hydratePreloaded(makePreloaded("seed"), client).current).toBe("seed");
 
-        // No `$`-read / `.subscribe()` yet → readable's start callback never ran.
+        // Nothing tracked the read, so the start callback never ran.
         expect(subscribe).not.toHaveBeenCalled();
     });
 
-    it("attaches the live subscription on subscribe and re-emits deltas", () => {
+    it("attaches the live subscription on the first tracked read and re-runs on deltas", () => {
         const { client, emit, subscribe, unsubscribe } = createFakeClient();
-        const store = hydratePreloaded(makePreloaded("seed"), client);
+        const handle = hydratePreloaded(makePreloaded("seed"), client);
 
-        const seen: unknown[] = [];
-        const stop = store.subscribe((value) => seen.push(value));
+        const reader = track(() => handle.current);
 
-        // First value is the synchronous seed; subscribing opened the WS sub.
-        expect(seen[0]).toBe("seed");
+        // First value is the synchronous seed; the tracked read opened the WS sub.
+        expect(reader.seen[0]).toBe("seed");
         expect(subscribe).toHaveBeenCalledTimes(1);
         expect(subscribe.mock.calls[0]?.[0]).toStrictEqual({ __lunoraRef: "messages:list" });
 
         // A server delta flows through.
         emit("live update");
+        flush();
 
-        expect(seen.at(-1)).toBe("live update");
+        expect(reader.last).toBe("live update");
 
-        // Tearing down the last subscriber closes the underlying subscription.
-        stop();
+        // Dropping the last reader closes the underlying subscription.
+        reader.stop();
 
         expect(unsubscribe).toHaveBeenCalledTimes(1);
     });

@@ -58,7 +58,7 @@ development"` / `"ShardDO…not exported"` warning. That's the adapter's own emp
 
 - `@sveltejs/kit` — the meta-framework (file-based routing + load functions)
 - `svelte` (5) — runes/stores UI runtime
-- `@lunora/svelte` — live stores, optimistic mutations, `hydratePreloaded`
+- `@lunora/svelte` — runes-native live queries, optimistic mutations, `hydratePreloaded`
 - `@lunora/*` — the realtime backend on Cloudflare Workers + Durable Objects
 
 ---

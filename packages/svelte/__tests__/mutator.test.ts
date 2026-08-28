@@ -1,4 +1,3 @@
-import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
 
 import type { MutatorTransaction } from "../src/mutator";
@@ -25,23 +24,23 @@ const deferredHandle = () => {
     return { calls, handle };
 };
 
-describe("mutator handle", () => {
+describe(mutator, () => {
     it("flips pending while the transaction persists and clears it on success", async () => {
         const { calls, handle } = deferredHandle();
         const handleStore = mutator(handle);
 
-        expect(get(handleStore.pending)).toBe(false);
+        expect(handleStore.pending).toBe(false);
 
         const settled = handleStore.mutate({ text: "hi" });
 
-        expect(get(handleStore.pending)).toBe(true);
+        expect(handleStore.pending).toBe(true);
 
         calls[0]?.resolve();
         await settled;
 
-        expect(get(handleStore.pending)).toBe(false);
-        expect(get(handleStore.isError)).toBe(false);
-        expect(get(handleStore.error)).toBeUndefined();
+        expect(handleStore.pending).toBe(false);
+        expect(handleStore.isError).toBe(false);
+        expect(handleStore.error).toBeUndefined();
     });
 
     it("captures the error, rejects mutate, and clears it on reset", async () => {
@@ -57,13 +56,13 @@ describe("mutator handle", () => {
         await settled;
 
         expect(rejected).toBeInstanceOf(Error);
-        expect(get(handleStore.isError)).toBe(true);
-        expect(get(handleStore.error)?.message).toBe("server said no");
+        expect(handleStore.isError).toBe(true);
+        expect(handleStore.error?.message).toBe("server said no");
 
         handleStore.reset();
 
-        expect(get(handleStore.error)).toBeUndefined();
-        expect(get(handleStore.isError)).toBe(false);
+        expect(handleStore.error).toBeUndefined();
+        expect(handleStore.isError).toBe(false);
     });
 
     it("ref-counts pending across overlapping invocations", async () => {
@@ -73,16 +72,16 @@ describe("mutator handle", () => {
         const first = handleStore.mutate({ text: "a" });
         const second = handleStore.mutate({ text: "b" });
 
-        expect(get(handleStore.pending)).toBe(true);
+        expect(handleStore.pending).toBe(true);
 
         calls[0]?.resolve();
         await first;
 
-        expect(get(handleStore.pending)).toBe(true);
+        expect(handleStore.pending).toBe(true);
 
         calls[1]?.resolve();
         await second;
 
-        expect(get(handleStore.pending)).toBe(false);
+        expect(handleStore.pending).toBe(false);
     });
 });

@@ -1,9 +1,8 @@
 import type { FunctionReference, LunoraClient } from "@lunora/client";
-import type { Readable } from "svelte/store";
-import { get, writable } from "svelte/store";
 
 import { isClient } from "./agent";
 import { getLunoraClient } from "./context";
+import { box } from "./reactive";
 import type { CreateMicrophone, CreateSpeaker, VoiceAudioFormat, VoiceMicrophone, VoiceSpeaker } from "./voice-audio";
 import { createBrowserMicrophone, createBrowserSpeaker } from "./voice-audio";
 
@@ -80,28 +79,28 @@ interface VoiceAgentOptions {
 }
 
 interface VoiceAgentHandle {
-    /** Svelte readable store of the current input RMS (0–1) — drive a mic level meter. Read with `$audioLevel`. */
-    audioLevel: Readable<number>;
-    /** Svelte readable store: `true` once the WS `ready` handshake completed. Read with `$connected`. */
-    connected: Readable<boolean>;
+    /** The current input RMS (0–1) — drive a mic level meter. */
+    readonly audioLevel: number;
+    /** `true` once the WS `ready` handshake completed. */
+    readonly connected: boolean;
     /** Tear down the call: close the socket, stop the mic, release audio. Idempotent. Call in `onDestroy`. */
     endCall: () => void;
-    /** Svelte readable store of the last transport/pipeline error, or `undefined`. Read with `$error`. */
-    error: Readable<Error | undefined>;
-    /** Svelte readable store of the live assistant text for the in-flight turn (grows via deltas; finalized on done). Read with `$interimTranscript`. */
-    interimTranscript: Readable<string>;
-    /** Svelte readable store: `true` while the mic is muted. Read with `$isMuted`. */
-    isMuted: Readable<boolean>;
+    /** The last transport/pipeline error, or `undefined`. */
+    readonly error: Error | undefined;
+    /** The live assistant text for the in-flight turn (grows via deltas; finalized on done). */
+    readonly interimTranscript: string;
+    /** `true` while the mic is muted. */
+    readonly isMuted: boolean;
     /** Send a typed turn (no audio) — a text message spoken back by the agent. */
     sendText: (text: string) => void;
     /** Open the mic, connect the socket, and start the conversation. Idempotent while active. */
     startCall: () => Promise<void>;
-    /** Svelte readable store of the current call lifecycle. Read with `$status`. */
-    status: Readable<VoiceStatus>;
+    /** The current call lifecycle. */
+    readonly status: VoiceStatus;
     /** Mute/unmute the microphone. Returns the new muted state. */
     toggleMute: () => boolean;
-    /** Svelte readable store of the last finalized user utterance (STT result). Read with `$transcript`. */
-    transcript: Readable<string>;
+    /** The last finalized user utterance (STT result). */
+    readonly transcript: string;
 }
 
 /** WebSocket `readyState` OPEN, read structurally so no DOM `WebSocket` global is required at module load. */
@@ -176,13 +175,13 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
         voice,
     } = options;
 
-    const statusStore = writable<VoiceStatus>("idle");
-    const connectedStore = writable(false);
-    const transcriptStore = writable("");
-    const interimTranscriptStore = writable("");
-    const audioLevelStore = writable(0);
-    const isMutedStore = writable(false);
-    const errorStore = writable<Error | undefined>();
+    const statusBox = box<VoiceStatus>("idle");
+    const connectedBox = box(false);
+    const transcriptBox = box("");
+    const interimTranscriptBox = box("");
+    const audioLevelBox = box(0);
+    const isMutedBox = box(false);
+    const errorBox = box<Error | undefined>(undefined);
 
     // The live per-call connection (React's `connectionRef.current`) and the
     // "start in flight" guard (React's `startingRef.current`) — plain closure
@@ -219,9 +218,9 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
         }
 
         starting = false;
-        connectedStore.set(false);
-        statusStore.set("idle");
-        audioLevelStore.set(0);
+        connectedBox.set(false);
+        statusBox.set("idle");
+        audioLevelBox.set(0);
     };
 
     const endCall = teardown;
@@ -235,8 +234,8 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
                     connection.speaking = true;
                 }
 
-                statusStore.set("speaking");
-                interimTranscriptStore.update((text) => text + frame.text);
+                statusBox.set("speaking");
+                interimTranscriptBox.set(interimTranscriptBox.current + frame.text);
 
                 break;
             }
@@ -245,8 +244,8 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
                     connection.speaking = false;
                 }
 
-                interimTranscriptStore.set(frame.text);
-                statusStore.set("listening");
+                interimTranscriptBox.set(frame.text);
+                statusBox.set("listening");
 
                 break;
             }
@@ -257,8 +256,8 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
                     connection.speaking = false;
                 }
 
-                errorStore.set(new Error(frame.message));
-                statusStore.set("listening");
+                errorBox.set(new Error(frame.message));
+                statusBox.set("listening");
 
                 break;
             }
@@ -269,7 +268,7 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
                 }
 
                 connection?.speaker?.interrupt();
-                statusStore.set("listening");
+                statusBox.set("listening");
 
                 break;
             }
@@ -279,8 +278,8 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
                     connection.suppressAudio = false;
                 }
 
-                connectedStore.set(true);
-                statusStore.set("listening");
+                connectedBox.set(true);
+                statusBox.set("listening");
 
                 break;
             }
@@ -289,9 +288,9 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
                     connection.suppressAudio = false;
                 }
 
-                transcriptStore.set(frame.text);
-                interimTranscriptStore.set("");
-                statusStore.set("thinking");
+                transcriptBox.set(frame.text);
+                interimTranscriptBox.set("");
+                statusBox.set("thinking");
 
                 break;
             }
@@ -310,7 +309,7 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
 
         connection.speaker ??= createSpeaker({ audioFormat: connection.audioFormat });
         connection.speaking = true;
-        statusStore.set("speaking");
+        statusBox.set("speaking");
         connection.speaker.enqueue(audio);
     };
 
@@ -320,9 +319,9 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
         }
 
         starting = true;
-        errorStore.set(undefined);
-        transcriptStore.set("");
-        interimTranscriptStore.set("");
+        errorBox.set(undefined);
+        transcriptBox.set("");
+        interimTranscriptBox.set("");
 
         try {
             const url = voiceSocketUrl(client.url, agentNameFromReference(voice), threadKey);
@@ -361,7 +360,7 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
             };
 
             socket.onerror = (): void => {
-                errorStore.set(new Error("voiceAgent: voice socket error"));
+                errorBox.set(new Error("voiceAgent: voice socket error"));
             };
 
             socket.onclose = (): void => {
@@ -391,14 +390,14 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
                         current.suppressAudio = true;
                     }
 
-                    statusStore.set("listening");
+                    statusBox.set("listening");
                 },
                 onLevel: (rms) => {
-                    audioLevelStore.set(rms);
+                    audioLevelBox.set(rms);
                 },
                 onSilence: () => {
                     sendFrame({ type: "commit" });
-                    statusStore.set("thinking");
+                    statusBox.set("thinking");
                 },
                 silenceDurationMs,
                 silenceThreshold,
@@ -407,15 +406,15 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
             // The call may have been torn down while getUserMedia was pending.
             if (current === connection) {
                 connection.microphone = microphone;
-                isMutedStore.set(false);
+                isMutedBox.set(false);
                 // Optimistically show "listening" once the mic is live — the server's
                 // `ready` frame follows and flips `connected` true.
-                statusStore.set("listening");
+                statusBox.set("listening");
             } else {
                 microphone.stop();
             }
         } catch (error_) {
-            errorStore.set(error_ instanceof Error ? error_ : new Error(String(error_)));
+            errorBox.set(error_ instanceof Error ? error_ : new Error(String(error_)));
             teardown();
         } finally {
             starting = false;
@@ -423,10 +422,10 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
     };
 
     const toggleMute = (): boolean => {
-        const next = !get(isMutedStore);
+        const next = !isMutedBox.current;
 
         current?.microphone?.setMuted(next);
-        isMutedStore.set(next);
+        isMutedBox.set(next);
 
         return next;
     };
@@ -435,22 +434,36 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
         // Only advance to "thinking" if the frame actually reached an open socket;
         // otherwise the UI would stick in "thinking" with no call.
         if (sendFrame({ text, type: "text" })) {
-            statusStore.set("thinking");
+            statusBox.set("thinking");
         }
     };
 
     return {
-        audioLevel: { subscribe: audioLevelStore.subscribe },
-        connected: { subscribe: connectedStore.subscribe },
+        get audioLevel() {
+            return audioLevelBox.current;
+        },
+        get connected() {
+            return connectedBox.current;
+        },
         endCall,
-        error: { subscribe: errorStore.subscribe },
-        interimTranscript: { subscribe: interimTranscriptStore.subscribe },
-        isMuted: { subscribe: isMutedStore.subscribe },
+        get error() {
+            return errorBox.current;
+        },
+        get interimTranscript() {
+            return interimTranscriptBox.current;
+        },
+        get isMuted() {
+            return isMutedBox.current;
+        },
         sendText,
         startCall,
-        status: { subscribe: statusStore.subscribe },
+        get status() {
+            return statusBox.current;
+        },
         toggleMute,
-        transcript: { subscribe: transcriptStore.subscribe },
+        get transcript() {
+            return transcriptBox.current;
+        },
     };
 };
 
@@ -459,12 +472,12 @@ const createVoiceAgentHandle = (client: LunoraClient, options: VoiceAgentOptions
  * WebSocket to the agent's `VoiceSessionDO`, captures mic audio as 16 kHz PCM,
  * streams the agent's synthesized speech back through the browser's audio output,
  * and mirrors the call lifecycle (`status`, `transcript`, `interimTranscript`,
- * `audioLevel`) to Svelte readable stores you read with `$`. Pass the generated
- * `api.agents.<name>Voice` reference (never a string), matching `agentChat`'s
- * reference-passing style. The Svelte counterpart to React's `useVoiceAgent`,
- * re-expressed as stores; the per-call connection lives in a closure variable (a
- * handle is created once per component, so no store-of-store indirection is
- * needed).
+ * `audioLevel`) onto reactive properties of the returned handle. Pass the
+ * generated `api.agents.<name>Voice` reference (never a string), matching
+ * `agentChat`'s reference-passing style. The Svelte counterpart to React's
+ * `useVoiceAgent`; the per-call connection lives in a closure variable, since a
+ * handle is created once per component and nothing needs to observe the
+ * connection itself.
  *
  * v1 transport is plain binary WebSocket frames with push-to-talk / silence-timer
  * turn detection and client-side RMS barge-in. The heavy Web Audio capture and

@@ -1,6 +1,4 @@
 import type { FunctionReference, LunoraClient } from "@lunora/client";
-import type { Readable } from "svelte/store";
-import { derived } from "svelte/store";
 
 import { isClient } from "./agent";
 import { getLunoraClient } from "./context";
@@ -28,10 +26,10 @@ interface AgentStateOptions {
 }
 
 interface AgentStateHandle<T> {
-    /** Svelte readable store of the subscription error, if the live channel reported one. Read with `$error`. */
-    error: Readable<Error | undefined>;
-    /** Svelte readable store of the live synced state, or `undefined` before it is seeded/first pushed. Read with `$state`. */
-    state: Readable<T | undefined>;
+    /** The subscription error, if the live channel reported one. */
+    readonly error: Error | undefined;
+    /** The live synced state, or `undefined` before it is seeded/first pushed. */
+    readonly state: T | undefined;
 }
 
 /**
@@ -41,13 +39,13 @@ interface AgentStateHandle<T> {
  * server pushes a fresh frame whenever the state changes (the dedicated query's
  * per-socket JSON memo suppresses no-op pushes on unrelated thread writes), so
  * `state` updates only on a real `setState`. The Svelte counterpart to React's
- * `useAgentState`, re-expressed as stores you read with `$`.
+ * `useAgentState`.
  *
  * Generic over the app's state shape (`agentState<SupportState>(...)`, itself a
  * record) — the reference is typed as an optional record because codegen cannot
- * see the per-agent state type; the generic casts to `T`. The `state`/`error`
- * stores are lazy, so the subscription opens on the first subscriber to `state`
- * and tears down when the last one leaves — there is no `teardown` to call.
+ * see the per-agent state type; the generic casts to `T`. The handle is lazy, so
+ * the subscription opens on the first tracked read of `state`/`error` and tears
+ * down when the last reader goes away — there is no `teardown` to call.
  *
  * Pass `client` explicitly, or omit it to resolve the ambient client published by
  * `setLunoraClient`.
@@ -62,10 +60,16 @@ export function agentState<T extends Record<string, unknown> = Record<string, un
     const client = hasExplicitClient ? clientOrOptions : getLunoraClient();
     const options = (hasExplicitClient ? maybeOptions : clientOrOptions) as AgentStateOptions;
 
-    const { data, error } = subscription(client, options.api.agents.agentState, { key: options.threadKey });
-    const state = derived(data, (value) => value as T | undefined);
+    const handle = subscription(client, options.api.agents.agentState, { key: options.threadKey });
 
-    return { error, state };
+    return {
+        get error() {
+            return handle.error;
+        },
+        get state() {
+            return handle.data as T | undefined;
+        },
+    };
 }
 
 export type { AgentStateApi, AgentStateHandle, AgentStateOptions };

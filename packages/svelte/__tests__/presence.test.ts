@@ -1,9 +1,9 @@
 import type { FunctionReference, LunoraClient } from "@lunora/client";
-import { get } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { HeartbeatReference, ListPresentReference } from "../src/presence";
 import { presence } from "../src/presence";
+import { track } from "./track";
 
 const HEARTBEAT = { __lunoraRef: "presence:heartbeat" } as unknown as HeartbeatReference;
 const LIST_PRESENT = { __lunoraRef: "presence:listPresent" } as unknown as ListPresentReference;
@@ -157,23 +157,23 @@ describe("presence (Svelte)", () => {
         });
 
         // Subscribe by reading the store (Svelte readable starts subscription on first subscriber).
-        const stopPresent = handle.present.subscribe(() => {});
+        const present = track(() => handle.present);
 
         await flushAsync();
 
         expect(fake.subscribeCalls).toHaveLength(1);
         expect(fake.subscribeCalls[0]?.functionPath).toBe("presence:listPresent");
         expect(fake.subscribeCalls[0]?.args).toMatchObject({ roomId: "room-1" });
-        expect(get(handle.present)).toBeUndefined();
+        expect(handle.present).toBeUndefined();
 
         const members = [{ lastSeen: 5, roomId: "room-1", sessionId: "sess-fixed" }];
 
         fake.push("presence:listPresent", { roomId: "room-1" }, members);
         await flushAsync();
 
-        expect(get(handle.present)).toStrictEqual(members);
+        expect(handle.present).toStrictEqual(members);
 
-        stopPresent();
+        present.stop();
         handle.teardown();
     });
 
@@ -297,7 +297,7 @@ describe("presence (Svelte)", () => {
 
         // Reading the store ("rendering" it) must not trigger a live WS
         // subscription server-side either.
-        const stopPresent = handle.present.subscribe(() => undefined);
+        const present = track(() => handle.present);
 
         await flushAsync();
 
@@ -314,9 +314,9 @@ describe("presence (Svelte)", () => {
         expect(fake.mutationCalls).toHaveLength(0);
 
         // The store stays at its inert initial value.
-        expect(get(handle.present)).toBeUndefined();
+        expect(handle.present).toBeUndefined();
 
-        stopPresent();
+        present.stop();
 
         // Teardown itself must not throw with nothing to release/clear.
         expect(() => {

@@ -1,14 +1,13 @@
 import type { ActionCallOptions, ArgsOf, FunctionReference, LunoraClient, ReturnOf } from "@lunora/client";
 import { createCallRunner } from "@lunora/client";
-import type { Readable } from "svelte/store";
-import { writable } from "svelte/store";
 
 import { getLunoraClient } from "./context";
+import { box } from "./reactive";
 
 /**
  * The reactive handle returned by {@link action} — the Svelte counterpart to
- * React's `useAction`, re-expressed as stores you read with `$`. The surface is
- * identical across the Lunora adapters (`@lunora/solid`, `/vue`).
+ * React's `useAction`. `data`/`error`/`pending` are reactive getters: read them
+ * off the handle rather than destructuring, or the value is snapshotted.
  */
 export interface ActionHandle<F extends FunctionReference> {
     /**
@@ -17,24 +16,23 @@ export interface ActionHandle<F extends FunctionReference> {
      */
     call: (args: ArgsOf<F>, options?: ActionCallOptions) => Promise<ReturnOf<F>>;
     /** The latest invocation's resolved value, or `undefined` before the first success. */
-    data: Readable<ReturnOf<F> | undefined>;
+    readonly data: ReturnOf<F> | undefined;
     /** The latest invocation's error, or `undefined`. */
-    error: Readable<Error | undefined>;
+    readonly error: Error | undefined;
 
     /**
      * `true` while any invocation from this handle is in flight. Ref-counted, so
      * overlapping calls compose and it only flips back to `false` once the last
-     * one settles. Read it with `$pending` in a component to disable a button.
+     * one settles — read it to disable a button.
      */
-    pending: Readable<boolean>;
+    readonly pending: boolean;
     /** Clear `data`/`error` back to idle. */
     reset: () => void;
 }
 
 /**
  * Create an {@link ActionHandle} for an action reference. The Svelte
- * counterpart to React's `useAction`: returns `{ data, error, pending, call,
- * reset }` of readable stores plus an awaitable `call`.
+ * counterpart to React's `useAction`.
  *
  * **Narrower than `mutation` on purpose:** no `optimistic` /
  * `optimisticUpdate`. An optimistic update patches the subscription cache on the
@@ -56,9 +54,9 @@ export function action<F extends FunctionReference>(clientOrFunction: LunoraClie
     const client = hasExplicitClient ? (clientOrFunction as LunoraClient) : getLunoraClient();
     const functionRef = (hasExplicitClient ? maybeFunction : clientOrFunction) as F;
 
-    const data = writable<ReturnOf<F> | undefined>();
-    const error = writable<Error | undefined>();
-    const pending = writable(false);
+    const data = box<ReturnOf<F> | undefined>(undefined);
+    const error = box<Error | undefined>(undefined);
+    const pending = box(false);
 
     const call = createCallRunner((args: ArgsOf<F>, options?: ActionCallOptions) => client.action(functionRef, args, options), {
         setError: (next) => {
@@ -78,5 +76,17 @@ export function action<F extends FunctionReference>(clientOrFunction: LunoraClie
         error.set(undefined);
     };
 
-    return { call, data, error, pending, reset };
+    return {
+        call,
+        get data() {
+            return data.current;
+        },
+        get error() {
+            return error.current;
+        },
+        get pending() {
+            return pending.current;
+        },
+        reset,
+    };
 }

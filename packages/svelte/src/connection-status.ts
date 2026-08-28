@@ -1,37 +1,34 @@
 import type { ConnectionStatus, LunoraClient } from "@lunora/client";
-import type { Readable } from "svelte/store";
-import { readable } from "svelte/store";
 
 import { getLunoraClient } from "./context";
+import type { ReactiveValue } from "./reactive";
+import { source } from "./reactive";
 
-/** The shape held by a {@link connectionStatus} store: the latest aggregate live-socket status. */
-export type ConnectionStatusStore = Readable<ConnectionStatus>;
+/** The handle returned by {@link connectionStatus}: `current` is the latest aggregate live-socket status. */
+export type ConnectionStatusHandle = ReactiveValue<ConnectionStatus>;
 
 /**
- * Expose the client's aggregate live-socket status as a Svelte readable store.
- * Read it with the `$store` idiom (`{$status}`) and it stays current: the value
- * transitions through `idle` → `connecting` → `connected` → `offline` as
- * sockets open and drop — the Svelte equivalent of `@lunora/react`'s
- * `useConnectionStatus`. Use it to drive a connection indicator.
+ * Expose the client's aggregate live-socket status. Read `handle.current` and it
+ * stays live: the value transitions through `idle` → `connecting` → `connected`
+ * → `offline` as sockets open and drop — the Svelte equivalent of
+ * `@lunora/react`'s `useConnectionStatus`. Use it to drive a connection indicator.
  *
- * The status listener attaches inside `readable`'s start callback (on the first
- * `$`-read / `.subscribe()`) and is released by the returned stop function when
- * the last subscriber goes away, so a store that's never read attaches nothing.
+ * The status listener attaches on the first tracked read of `current` and is
+ * released once every effect that read it is destroyed, so a handle that's never
+ * read attaches nothing.
  *
  * Pass `client` explicitly, or omit it to resolve the ambient client published
  * by `setLunoraClient` (which must therefore be called during component init,
  * before this runs).
  */
-export const connectionStatus = (client?: LunoraClient): ConnectionStatusStore => {
+export const connectionStatus = (client?: LunoraClient): ConnectionStatusHandle => {
     const resolved = client ?? getLunoraClient();
 
-    return readable<ConnectionStatus>(resolved.connectionStatus(), (set) => {
-        // Re-read on attach in case the status moved between store creation and
-        // the first subscriber.
-        set(resolved.connectionStatus());
-
-        return resolved.onConnectionStatus((next) => {
-            set(next);
-        });
-    });
+    // `connectionStatus()` is the client's own live accessor, so `current` reads
+    // straight through it — nothing to mirror, nothing to go stale between the
+    // handle being built and the first read.
+    return source<ConnectionStatus>(
+        () => resolved.connectionStatus(),
+        (update) => resolved.onConnectionStatus(update),
+    );
 };

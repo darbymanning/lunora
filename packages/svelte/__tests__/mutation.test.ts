@@ -1,5 +1,4 @@
 import type { FunctionReference, LunoraClient } from "@lunora/client";
-import { get } from "svelte/store";
 import { describe, expect, it, vi } from "vitest";
 
 import { mutation } from "../src/mutation";
@@ -7,13 +6,12 @@ import { mutation } from "../src/mutation";
 const fnRef = { __lunoraRef: "messages:send" } as unknown as FunctionReference;
 const args = { text: "hi" } as unknown;
 
-describe("mutation handle", () => {
+describe(mutation, () => {
     it("forwards args and options to client.mutation and resolves the result", async () => {
         const mutationFn = vi.fn<(function_: unknown, args: unknown, options?: { shardKey?: string }) => Promise<unknown>>().mockResolvedValue({ id: 1 });
         const client = { mutation: mutationFn } as unknown as LunoraClient;
 
-        const { mutate } = mutation(client, fnRef);
-        const result = await mutate(args, { shardKey: "general" });
+        const result = await mutation(client, fnRef).mutate(args, { shardKey: "general" });
 
         expect(result).toStrictEqual({ id: 1 });
         expect(mutationFn).toHaveBeenCalledWith(fnRef, args, { shardKey: "general" });
@@ -29,18 +27,18 @@ describe("mutation handle", () => {
         );
         const client = { mutation: mutationFn } as unknown as LunoraClient;
 
-        const { mutate, pending } = mutation(client, fnRef);
+        const handle = mutation(client, fnRef);
 
-        expect(get(pending)).toBe(false);
+        expect(handle.pending).toBe(false);
 
-        const inflight = mutate(args);
+        const inflight = handle.mutate(args);
 
-        expect(get(pending)).toBe(true);
+        expect(handle.pending).toBe(true);
 
         resolveCall({ ok: true });
         await inflight;
 
-        expect(get(pending)).toBe(false);
+        expect(handle.pending).toBe(false);
     });
 
     it("keeps pending true until the last overlapping call settles (ref-counted)", async () => {
@@ -53,21 +51,21 @@ describe("mutation handle", () => {
         );
         const client = { mutation: mutationFn } as unknown as LunoraClient;
 
-        const { mutate, pending } = mutation(client, fnRef);
-        const first = mutate(args);
-        const second = mutate(args);
+        const handle = mutation(client, fnRef);
+        const first = handle.mutate(args);
+        const second = handle.mutate(args);
 
-        expect(get(pending)).toBe(true);
+        expect(handle.pending).toBe(true);
 
         resolvers[0]?.(null);
         await first;
 
         // One call still in flight → still pending.
-        expect(get(pending)).toBe(true);
+        expect(handle.pending).toBe(true);
 
         resolvers[1]?.(null);
         await second;
 
-        expect(get(pending)).toBe(false);
+        expect(handle.pending).toBe(false);
     });
 });

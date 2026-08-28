@@ -1,20 +1,15 @@
 import type { ArgsOf, FunctionReference, LunoraClient, ReturnOf, Unsubscribe } from "@lunora/client";
 import type { Page, PaginationResult, PaginationStatus } from "@lunora/client/pagination";
 import { applyLoadMore, derivePaginationStatus, initialPages, rebalance } from "@lunora/client/pagination";
-import type { Readable } from "svelte/store";
-import { derived, get, readable, writable } from "svelte/store";
+import { createSubscriber } from "svelte/reactivity";
 
 import { stableWireKey } from "../../../shared/wire-key";
 import { getLunoraClient } from "./context";
 import { isFunctionReference } from "./is-function-reference";
-import { isReadableStore } from "./is-readable-store";
-import { subscribeReactiveArgs } from "./subscribe-reactive-args";
+import { box } from "./reactive";
 
 /** The args a paginated query exposes minus the framework-supplied page cursor. */
 type PaginatedArgs<F extends FunctionReference> = Omit<ArgsOf<F>, "paginationOpts">;
-
-/** Paginated args, the skip sentinel, or a reactive (`Readable`) source of either. */
-type ReactivePaginatedArgs<F extends FunctionReference> = "skip" | PaginatedArgs<F> | Readable<"skip" | PaginatedArgs<F>>;
 
 /** The element type of the `page` array a paginated query returns. */
 type PageItemOf<F extends FunctionReference> = ReturnOf<F> extends { page: (infer T)[] } ? T : unknown;
@@ -27,12 +22,12 @@ interface PaginatedQueryOptions {
 
 interface PaginatedQueryHandle<T> {
     /** `true` while the first page or a `loadMore` page is in flight. */
-    isLoading: Readable<boolean>;
+    readonly isLoading: boolean;
     /** Request the next page. A no-op unless `status === "CanLoadMore"`. */
     loadMore: (numberItems: number) => void;
     /** Flattened items across every loaded page, in order. */
-    results: Readable<T[]>;
-    status: Readable<PaginationStatus>;
+    readonly results: T[];
+    readonly status: PaginationStatus;
 }
 
 interface InfiniteQueryOptions {
@@ -45,14 +40,21 @@ interface InfiniteQueryHandle<T> {
     /** Request the next page. A no-op unless `status === "CanLoadMore"`. */
     fetchNextPage: (numberItems?: number) => void;
     /** `true` when the loaded tail reports it can load another page. */
-    hasNextPage: Readable<boolean>;
+    readonly hasNextPage: boolean;
     /** `true` while a `fetchNextPage` page (beyond the first) is in flight. */
-    isFetchingNextPage: Readable<boolean>;
+    readonly isFetchingNextPage: boolean;
     /** `true` while the first page is in flight. */
-    isLoading: Readable<boolean>;
+    readonly isLoading: boolean;
     /** One inner array per loaded page, in order; unresolved pages are omitted. */
-    pages: Readable<T[][]>;
-    status: Readable<PaginationStatus>;
+    readonly pages: T[][];
+    readonly status: PaginationStatus;
+}
+
+/** The engine's reactive surface, shared by `paginatedQuery` and `infiniteQuery`. */
+interface PaginatedEngine<T> {
+    loadMore: (numberItems: number) => void;
+    readonly pageResults: (PaginationResult<T> | undefined)[];
+    readonly status: PaginationStatus;
 }
 
 const buildPageArgs = (page: Page, baseArgs: Record<string, unknown>): Record<string, unknown> => {
@@ -71,9 +73,9 @@ const buildPageKey = (functionPath: string, pageArgs: Record<string, unknown>): 
 
 /**
  * Internal pagination engine. Manages page boundaries, subscriptions, results,
- * and split/join maintenance. Uses the Svelte lazy-readable pattern: subscriptions
- * are opened inside the `readable` start callback and torn down when the last
- * subscriber unsubscribes — exactly like `query.ts` does for plain queries.
+ * and split/join maintenance. Page subscriptions open on the first tracked read
+ * of `pageResults`/`status` and tear down once every effect that read them is
+ * destroyed — exactly the lifecycle `query.ts` gives a plain query.
  *
  * The `pendingPageKeys` set suppresses split/join rebalance while a freshly
  * loaded page is still awaiting its first result — matching Vue's policy so a
@@ -83,19 +85,14 @@ const buildPageKey = (functionPath: string, pageArgs: Record<string, unknown>): 
 const createPaginatedEngine = <T>(
     client: LunoraClient,
     function_: FunctionReference,
-    baseArgs: "skip" | Record<string, unknown> | Readable<"skip" | Record<string, unknown>>,
+    baseArgs: "skip" | Record<string, unknown>,
     options: { initialNumItems: number; shardKey?: string },
-): {
-    loadMore: (numberItems: number) => void;
-    pageResults: Readable<(PaginationResult<T> | undefined)[]>;
-    status: Readable<PaginationStatus>;
-} => {
+): PaginatedEngine<T> => {
     const { initialNumItems, shardKey } = options;
+    const skipped = baseArgs === "skip";
 
-    const pagesStore = writable<Page[]>(initialPages(initialNumItems));
-    // pageResultsStore is a writable used as the source; pageResults is the
-    // public Readable that the lazy start/stop callback wires up.
-    const pageResultsInternal = writable<(PaginationResult<T> | undefined)[]>([]);
+    let pages: Page[] = initialPages(initialNumItems);
+    const pageResults = box<(PaginationResult<T> | undefined)[]>([]);
 
     const resultsByKey = new Map<string, PaginationResult<T>>();
     const activeSubs = new Map<string, Unsubscribe>();
@@ -107,26 +104,14 @@ const createPaginatedEngine = <T>(
      */
     const pendingPageKeys = new Set<string>();
 
-    // For a reactive args source this starts at `"skip"` and is replaced by the
-    // store's first (synchronous) emission when `pageResults` gains a subscriber.
-    let currentBaseArgs: "skip" | Record<string, unknown> = isReadableStore<"skip" | Record<string, unknown>>(baseArgs) ? "skip" : baseArgs;
-
     const rebuildPageResults = (): void => {
-        if (currentBaseArgs === "skip") {
-            pageResultsInternal.set([]);
+        if (baseArgs === "skip") {
+            pageResults.set([]);
 
             return;
         }
 
-        const baseArgsRecord = currentBaseArgs;
-
-        const updated = get(pagesStore).map((page) => {
-            const key = buildPageKey(function_["__lunoraRef"], buildPageArgs(page, baseArgsRecord));
-
-            return resultsByKey.get(key);
-        });
-
-        pageResultsInternal.set(updated);
+        pageResults.set(pages.map((page) => resultsByKey.get(buildPageKey(function_["__lunoraRef"], buildPageArgs(page, baseArgs)))));
     };
 
     /**
@@ -136,19 +121,18 @@ const createPaginatedEngine = <T>(
      * the lower of the merged pages; a split page seeds both halves from the
      * parent). Best-effort — the fresh subscription overwrites it once attached.
      *
-     * Must run BEFORE `pagesStore.set(next)` / `syncSubscriptions()` so the new
-     * keys are seeded before the stale-subscription sweep prunes the old ones.
-     * Without this, `rebuildPageResults` emits `undefined` for the re-keyed
-     * page(s) and the derived `results`/`pages` stores drop those items until
-     * the new subscription's first frame arrives.
+     * Must run BEFORE `pages` is swapped / `syncSubscriptions()` so the new keys
+     * are seeded before the stale-subscription sweep prunes the old ones. Without
+     * this, `rebuildPageResults` emits `undefined` for the re-keyed page(s) and
+     * `results`/`pages` drop those items until the new subscription's first frame
+     * arrives.
      */
     const migrateResultsForRebalance = (oldPages: Page[], newPages: Page[]): void => {
-        if (currentBaseArgs === "skip") {
+        if (baseArgs === "skip") {
             return;
         }
 
-        const baseArgsRecord = currentBaseArgs;
-        const keyOf = (page: Page): string => buildPageKey(function_["__lunoraRef"], buildPageArgs(page, baseArgsRecord));
+        const keyOf = (page: Page): string => buildPageKey(function_["__lunoraRef"], buildPageArgs(page, baseArgs));
 
         for (const newPage of newPages) {
             const newKey = keyOf(newPage);
@@ -171,23 +155,21 @@ const createPaginatedEngine = <T>(
     };
 
     const syncPass = (): void => {
-        if (currentBaseArgs === "skip") {
+        if (baseArgs === "skip") {
             for (const unsub of activeSubs.values()) {
                 unsub();
             }
 
             activeSubs.clear();
-            pageResultsInternal.set([]);
+            pageResults.set([]);
 
             return;
         }
 
-        const baseArgsRecord = currentBaseArgs;
-        const pages = get(pagesStore);
         const wantedKeys = new Set<string>();
 
         for (const page of pages) {
-            wantedKeys.add(buildPageKey(function_["__lunoraRef"], buildPageArgs(page, baseArgsRecord)));
+            wantedKeys.add(buildPageKey(function_["__lunoraRef"], buildPageArgs(page, baseArgs)));
         }
 
         // Close stale subscriptions and drop their cached results so a later
@@ -204,7 +186,7 @@ const createPaginatedEngine = <T>(
 
         // Open new subscriptions.
         for (const page of pages) {
-            const pageArgs = buildPageArgs(page, baseArgsRecord);
+            const pageArgs = buildPageArgs(page, baseArgs);
             const key = buildPageKey(function_["__lunoraRef"], pageArgs);
 
             if (activeSubs.has(key)) {
@@ -230,15 +212,14 @@ const createPaginatedEngine = <T>(
                     // `loadMore`) stays in `pendingPageKeys` until its first result
                     // arrives; joining before that would discard visible content.
                     if (pendingPageKeys.size === 0) {
-                        const latestPages = get(pagesStore);
-                        const next = rebalance(latestPages, get(pageResultsInternal));
+                        const next = rebalance(pages, pageResults.current);
 
                         if (next) {
                             // Carry results to the re-keyed pages before swapping the
                             // page list so the sweep in `syncSubscriptions` cannot drop
                             // visible items before the new subscription's first frame.
-                            migrateResultsForRebalance(latestPages, next);
-                            pagesStore.set(next);
+                            migrateResultsForRebalance(pages, next);
+                            pages = next;
                             // eslint-disable-next-line @typescript-eslint/no-use-before-define -- runs inside a deferred subscription callback, after syncSubscriptions is defined
                             syncSubscriptions();
                             rebuildPageResults();
@@ -286,65 +267,38 @@ const createPaginatedEngine = <T>(
         }
     };
 
-    const teardownAll = (): void => {
-        for (const unsub of activeSubs.values()) {
-            unsub();
-        }
-
-        activeSubs.clear();
-        resultsByKey.clear();
-        pendingPageKeys.clear();
-    };
-
-    // pageResults is a lazy Svelte readable: subscriptions open on the first
-    // $-read and close when the last subscriber unsubscribes — matching the
-    // pattern used by `query.ts` so no WS handles leak after unmount.
-    const pageResults: Readable<(PaginationResult<T> | undefined)[]> = readable<(PaginationResult<T> | undefined)[]>([], (set) => {
-        // Wire internal store updates through to this readable's subscribers.
-        const unsubInternal = pageResultsInternal.subscribe(set);
-
-        // Open the page subscriptions now that someone is watching. With a
-        // reactive args source every emission is a full teardown + fresh
-        // construction — the teardown resets pagination to the first page, so a
-        // new emission builds exactly as if the engine were new.
-        const stopArgs = subscribeReactiveArgs<"skip" | Record<string, unknown>>(baseArgs, (resolved) => {
-            currentBaseArgs = resolved;
-            syncSubscriptions();
-            rebuildPageResults();
-
-            return () => {
-                teardownAll();
-                pagesStore.set(initialPages(initialNumItems));
-            };
-        });
+    // The page subscriptions open on the first tracked read and close once every
+    // effect that read them is destroyed — matching `query.ts`, so no WS handles
+    // leak after unmount and a server render opens nothing.
+    const track = createSubscriber(() => {
+        syncSubscriptions();
+        rebuildPageResults();
 
         return () => {
-            stopArgs();
-            unsubInternal();
-            pageResultsInternal.set([]);
+            for (const unsub of activeSubs.values()) {
+                unsub();
+            }
+
+            activeSubs.clear();
+            resultsByKey.clear();
+            pendingPageKeys.clear();
+            pages = initialPages(initialNumItems);
+            pageResults.set([]);
         };
     });
 
-    const status = derived<Readable<(PaginationResult<T> | undefined)[]>, PaginationStatus>(
-        pageResults,
-        (results) => derivePaginationStatus(currentBaseArgs === "skip", results).status,
-    );
-
     const loadMore = (numberItems: number): void => {
-        if (currentBaseArgs === "skip") {
+        if (baseArgs === "skip") {
             return;
         }
 
-        const currentResults = get(pageResultsInternal);
-
-        const { nextCursor, status: currentStatus } = derivePaginationStatus(false, currentResults);
+        const { nextCursor, status: currentStatus } = derivePaginationStatus(false, pageResults.current);
 
         if (currentStatus !== "CanLoadMore") {
             return;
         }
 
-        const currentPages = get(pagesStore);
-        const next = applyLoadMore(currentPages, nextCursor, numberItems);
+        const next = applyLoadMore(pages, nextCursor, numberItems);
 
         if (!next) {
             return;
@@ -354,12 +308,12 @@ const createPaginatedEngine = <T>(
         // `endCursor: null` to `endCursor: cursor`. Carry the existing result to
         // the new key before updating pages so `rebuildPageResults` does not lose
         // the first-page data when the pinned subscription re-opens.
-        const oldTail = currentPages.at(-1);
+        const oldTail = pages.at(-1);
         const newPinnedPage = next.at(-2); // applyLoadMore appends the new open tail last
 
         if (oldTail && newPinnedPage) {
-            const oldKey = buildPageKey(function_["__lunoraRef"], buildPageArgs(oldTail, currentBaseArgs));
-            const newKey = buildPageKey(function_["__lunoraRef"], buildPageArgs(newPinnedPage, currentBaseArgs));
+            const oldKey = buildPageKey(function_["__lunoraRef"], buildPageArgs(oldTail, baseArgs));
+            const newKey = buildPageKey(function_["__lunoraRef"], buildPageArgs(newPinnedPage, baseArgs));
 
             if (oldKey !== newKey) {
                 const carried = resultsByKey.get(oldKey);
@@ -373,66 +327,83 @@ const createPaginatedEngine = <T>(
             }
         }
 
-        pagesStore.set(next);
+        pages = next;
         syncSubscriptions();
         rebuildPageResults();
     };
 
-    return { loadMore, pageResults, status };
+    return {
+        loadMore,
+        get pageResults() {
+            track();
+
+            return pageResults.current;
+        },
+        get status() {
+            track();
+
+            return derivePaginationStatus(skipped, pageResults.current).status;
+        },
+    };
 };
 
 /**
- * Open a live paginated query as Svelte stores. The first page opens when
- * called; call `loadMore(n)` to append the next page. Results are flattened
- * across all loaded pages.
+ * Open a live paginated query. The first page opens on the first tracked read;
+ * call `loadMore(n)` to append the next. Results are flattened across all loaded
+ * pages. Read `results`/`status`/`isLoading` off the handle rather than
+ * destructuring, or the value is snapshotted and never updates.
  *
  * Pass `client` explicitly, or omit it to resolve the ambient client from the
  * Svelte context.
  *
- * `args` may also be a `Readable` store: each emission tears the engine down
- * and rebuilds it against the new args (pagination resets to the first page);
- * a `"skip"` emission tears down without re-opening.
+ * For args that change, build the handle inside a `$derived.by`, as `query`
+ * documents. Each change builds a fresh handle, so pagination resets to the
+ * first page.
  */
 export function paginatedQuery<F extends FunctionReference>(
     function_: F,
-    args: ReactivePaginatedArgs<F>,
+    args: "skip" | PaginatedArgs<F>,
     options: PaginatedQueryOptions,
 ): PaginatedQueryHandle<PageItemOf<F>>;
 export function paginatedQuery<F extends FunctionReference>(
     client: LunoraClient,
     function_: F,
-    args: ReactivePaginatedArgs<F>,
+    args: "skip" | PaginatedArgs<F>,
     options: PaginatedQueryOptions,
 ): PaginatedQueryHandle<PageItemOf<F>>;
 export function paginatedQuery<F extends FunctionReference>(
     clientOrFunction: F | LunoraClient,
-    functionOrArguments: F | ReactivePaginatedArgs<F>,
-    argumentsOrOptions: PaginatedQueryOptions | ReactivePaginatedArgs<F>,
+    functionOrArguments: F | "skip" | PaginatedArgs<F>,
+    argumentsOrOptions: PaginatedQueryOptions | "skip" | PaginatedArgs<F>,
     maybeOptions?: PaginatedQueryOptions,
 ): PaginatedQueryHandle<PageItemOf<F>> {
     const hasExplicitClient = !isFunctionReference(clientOrFunction);
     const client = hasExplicitClient ? clientOrFunction : getLunoraClient();
     const functionRef = (hasExplicitClient ? functionOrArguments : clientOrFunction) as F;
-    const args = (hasExplicitClient ? argumentsOrOptions : functionOrArguments) as ReactivePaginatedArgs<F>;
+    const args = (hasExplicitClient ? argumentsOrOptions : functionOrArguments) as "skip" | PaginatedArgs<F>;
     const options = (hasExplicitClient ? maybeOptions : argumentsOrOptions) as PaginatedQueryOptions;
 
-    const { loadMore, pageResults, status } = createPaginatedEngine<PageItemOf<F>>(client, functionRef, args, options);
+    const engine = createPaginatedEngine<PageItemOf<F>>(client, functionRef, args, options);
 
-    const results = derived<Readable<(PaginationResult<PageItemOf<F>> | undefined)[]>, PageItemOf<F>[]>(pageResults, (currentResults) =>
-        currentResults.flatMap((page) => page?.page ?? []),
-    );
+    return {
+        get isLoading() {
+            const current = engine.status;
 
-    const isLoading = derived<Readable<PaginationStatus>, boolean>(
-        status,
-        (currentStatus) => currentStatus === "LoadingFirstPage" || currentStatus === "LoadingMore",
-    );
-
-    return { isLoading, loadMore, results, status };
+            return current === "LoadingFirstPage" || current === "LoadingMore";
+        },
+        loadMore: engine.loadMore,
+        get results() {
+            return engine.pageResults.flatMap((page) => page?.page ?? []);
+        },
+        get status() {
+            return engine.status;
+        },
+    };
 }
 
 /**
- * Open a live paginated query as Svelte stores, keeping each page as its own
- * inner array (TanStack-Query-style `fetchNextPage` / `hasNextPage` shape).
+ * Open a live paginated query keeping each page as its own inner array
+ * (TanStack-Query-style `fetchNextPage` / `hasNextPage` shape).
  *
  * Pass `client` explicitly, or omit it to resolve the ambient client from the
  * Svelte context.
@@ -461,21 +432,28 @@ export function infiniteQuery<F extends FunctionReference>(
     const options = (hasExplicitClient ? maybeOptions : argumentsOrOptions) as InfiniteQueryOptions;
     const { initialNumItems } = options;
 
-    const { loadMore, pageResults, status } = createPaginatedEngine<PageItemOf<F>>(client, functionRef, args, options);
+    const engine = createPaginatedEngine<PageItemOf<F>>(client, functionRef, args, options);
 
-    const pages = derived<Readable<(PaginationResult<PageItemOf<F>> | undefined)[]>, PageItemOf<F>[][]>(pageResults, (currentResults) =>
-        currentResults.flatMap((page) => (page ? [page.page] : [])),
-    );
-
-    const isLoading = derived<Readable<PaginationStatus>, boolean>(status, (s) => s === "LoadingFirstPage");
-    const hasNextPage = derived<Readable<PaginationStatus>, boolean>(status, (s) => s === "CanLoadMore");
-    const isFetchingNextPage = derived<Readable<PaginationStatus>, boolean>(status, (s) => s === "LoadingMore");
-
-    const fetchNextPage = (numberItems?: number): void => {
-        loadMore(numberItems ?? initialNumItems);
+    return {
+        fetchNextPage: (numberItems?: number) => {
+            engine.loadMore(numberItems ?? initialNumItems);
+        },
+        get hasNextPage() {
+            return engine.status === "CanLoadMore";
+        },
+        get isFetchingNextPage() {
+            return engine.status === "LoadingMore";
+        },
+        get isLoading() {
+            return engine.status === "LoadingFirstPage";
+        },
+        get pages() {
+            return engine.pageResults.flatMap((page) => (page ? [page.page] : []));
+        },
+        get status() {
+            return engine.status;
+        },
     };
-
-    return { fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, pages, status };
 }
 
-export type { InfiniteQueryHandle, InfiniteQueryOptions, PageItemOf, PaginatedArgs, PaginatedQueryHandle, PaginatedQueryOptions, ReactivePaginatedArgs };
+export type { InfiniteQueryHandle, InfiniteQueryOptions, PageItemOf, PaginatedArgs, PaginatedQueryHandle, PaginatedQueryOptions };

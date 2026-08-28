@@ -160,7 +160,7 @@ The same reactive contract ships in every Lunora client adapter: one import, idi
 | React     | `@lunora/react`  | `useFlag` / `useFlags`       | the value        |
 | Vue       | `@lunora/vue`    | `useFlag` / `useFlags`       | a readonly `Ref` |
 | Solid     | `@lunora/solid`  | `createFlag` / `createFlags` | an accessor      |
-| Svelte    | `@lunora/svelte` | `flag` / `flags`             | a readable store |
+| Svelte    | `@lunora/svelte` | `flag` / `flags`             | a runes handle   |
 
 ```ts
 // Vue — key and context may be refs or getters, so the subscription is reactive.
@@ -171,9 +171,9 @@ const darkMode = useFlag("dark-mode", false); // Readonly<Ref<boolean>>
 import { createFlag } from "@lunora/solid";
 const darkMode = createFlag("dark-mode", false); // Accessor<boolean>
 
-// Svelte — read with the `$store` idiom (`{$darkMode}`).
+// Svelte — read `darkMode.current` in a template, `$derived`, or `$effect`.
 import { flag } from "@lunora/svelte";
-const darkMode = flag("dark-mode", false); // Readable<boolean>
+const darkMode = flag("dark-mode", false); // ReactiveValue<boolean>
 ```
 
 Astro and Nuxt are server-rendered: read flags through `ctx.flags` in a server endpoint or loader and pass the resolved values to an interactive island built with one of the client adapters above.

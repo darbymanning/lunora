@@ -1,10 +1,10 @@
 import type { FunctionReference } from "@lunora/client";
-import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
 
 import type { AgentStateApi } from "../src/agent-state";
 import { agentState } from "../src/agent-state";
 import { createFakeClient } from "./fake-client";
+import { flush, track } from "./track";
 
 const makeRef = (reference: string): FunctionReference => {
     return { __lunoraRef: reference };
@@ -29,16 +29,16 @@ describe(agentState, () => {
         const fake = createFakeClient();
         const handle = agentState(fake.client, { api: buildApi(), threadKey: "t1" });
 
-        // The `state` store is lazy — the subscription opens on its first subscriber.
-        const stop = handle.state.subscribe(() => {});
+        // The handle is lazy — the subscription opens on the first tracked read.
+        const reader = track(() => handle.state);
 
         expect(fake.subscribeCalls.map((call) => call.functionPath)).toStrictEqual([STATE_REF]);
         expect(fake.subscribeCalls[0]?.args).toStrictEqual({ key: "t1" });
-        expect(get(handle.state)).toBeUndefined();
-        expect(get(handle.error)).toBeUndefined();
+        expect(reader.last).toBeUndefined();
+        expect(handle.error).toBeUndefined();
 
-        // Dropping the last subscriber tears the underlying subscription down.
-        stop();
+        // Dropping the last reader tears the underlying subscription down.
+        reader.stop();
 
         expect(fake.unsubscribeSpy).toHaveBeenCalledTimes(1);
     });
@@ -47,17 +47,19 @@ describe(agentState, () => {
         const fake = createFakeClient();
         const handle = agentState<SupportState>(fake.client, { api: buildApi(), threadKey: "t1" });
 
-        const stop = handle.state.subscribe(() => {});
+        const reader = track(() => handle.state);
 
         fake.push(STATE_REF, { plan: ["research"], step: 1 });
+        flush();
 
-        expect(get(handle.state)).toStrictEqual({ plan: ["research"], step: 1 });
+        expect(reader.last).toStrictEqual({ plan: ["research"], step: 1 });
 
         // A later setState pushes a fresh absolute frame — the handle reflects it wholesale.
         fake.push(STATE_REF, { plan: ["research", "draft"], step: 2 });
+        flush();
 
-        expect(get(handle.state)).toStrictEqual({ plan: ["research", "draft"], step: 2 });
+        expect(reader.last).toStrictEqual({ plan: ["research", "draft"], step: 2 });
 
-        stop();
+        reader.stop();
     });
 });

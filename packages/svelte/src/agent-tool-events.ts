@@ -1,6 +1,4 @@
 import type { FunctionReference, LunoraClient } from "@lunora/client";
-import type { Readable } from "svelte/store";
-import { derived } from "svelte/store";
 
 import { isClient } from "./agent";
 import type { AgentChatMessage, AgentLiveEvent } from "./agent-chat";
@@ -62,10 +60,10 @@ interface AgentToolEventsHandle {
     /**
      * The thread's tool events: the durable lifecycle (oldest first, by `seq`)
      * followed by any in-flight ephemeral progress events, recomputed from the live
-     * subscription + stream. Read with `$events`. With no `stream` reference only
-     * the durable lifecycle is surfaced. Treat as derived, not identity-stable.
+     * subscription + stream on every read. With no `stream` reference only the
+     * durable lifecycle is surfaced. Treat as derived, not identity-stable.
      */
-    events: Readable<ReadonlyArray<AgentToolEvent>>;
+    readonly events: ReadonlyArray<AgentToolEvent>;
 }
 
 /**
@@ -116,20 +114,21 @@ const toDurableEvent = (message: AgentChatMessage): AgentToolEvent[] | undefined
  * A focused view of a thread's tool activity: tool calls, their results,
  * human-in-the-loop approval pauses, and live `ctx.reportProgress(...)` events —
  * without the full chat message surface. The Svelte counterpart to React's
- * `useAgentToolEvents`, re-expressed as a readable store you read with `$`.
+ * `useAgentToolEvents`.
  *
  * It composes the existing primitives rather than adding transport:
  * {@link subscription} over `api.agents.agentMessages` for the durable lifecycle
  * and {@link stream} over the optional app event stream for ephemeral progress,
- * combined through `derived`. Progress events are live-only (the durable path never
+ * combined in the `events` getter. Progress events are live-only (the durable path never
  * emits them): they ride the same sink as token deltas and are surfaced here,
  * correlated to their tool call by `toolCallId`. For the conversational surface
  * (messages + streaming text + approvals) use `agentChat`; this handle is the
  * tool-observability slice.
  *
- * The underlying subscription and stream are lazy — they open when `events` gains
- * its first subscriber and tear down when the last one leaves — so there is no
- * `teardown` to call (unlike the write-bearing `agentChat`).
+ * The underlying subscription and stream are lazy — they open on the first
+ * tracked read of `events` and tear down once every effect that read it is
+ * destroyed — so there is no `teardown` to call (unlike the write-bearing
+ * `agentChat`).
  *
  * Pass `client` explicitly, or omit it to resolve the ambient client published by
  * `setLunoraClient`.
@@ -144,32 +143,32 @@ export function agentToolEvents(clientOrOptions: AgentToolEventsOptions | Lunora
     const { api, limit, stream: streamReference, threadKey } = options;
 
     const historyArgs = limit === undefined ? { key: threadKey } : { key: threadKey, limit };
-    const { data } = subscription(client, api.agents.agentMessages, historyArgs);
+    const history = subscription(client, api.agents.agentMessages, historyArgs);
 
     // The event stream is optional: with no reference we pass the sentinel + "skip"
     // so `stream` never opens a stream (and no progress events are surfaced). The
-    // `chunks` store is lazy, so combining it into `events` opens it only when
-    // `events` gains a subscriber.
+    // stream is lazy, so reading it from `events` opens it only when `events` is
+    // itself read.
     const streamArguments = streamReference === undefined ? "skip" : { key: threadKey };
     const streamHandle = stream(client, streamReference ?? NO_STREAM_REF, streamArguments);
 
-    const events = derived([data, streamHandle.chunks], ([history, liveEvents]) => {
-        const durable = (history ?? []) as unknown as ReadonlyArray<AgentChatMessage>;
-        const collected: AgentToolEvent[] = durable.flatMap((message) => toDurableEvent(message) ?? []);
+    return {
+        get events() {
+            const durable = (history.data ?? []) as unknown as ReadonlyArray<AgentChatMessage>;
+            const collected: AgentToolEvent[] = durable.flatMap((message) => toDurableEvent(message) ?? []);
 
-        // Append the thread's in-flight progress events after the durable lifecycle.
-        // They're transient — cleared when the stream resets — so they naturally
-        // trail the persisted history.
-        for (const event of liveEvents) {
-            if (event.kind === "progress" && event.threadKey === threadKey) {
-                collected.push({ data: event.data, toolCallId: event.toolCallId, type: "progress" });
+            // Append the thread's in-flight progress events after the durable lifecycle.
+            // They're transient — cleared when the stream resets — so they naturally
+            // trail the persisted history.
+            for (const event of streamHandle.chunks) {
+                if (event.kind === "progress" && event.threadKey === threadKey) {
+                    collected.push({ data: event.data, toolCallId: event.toolCallId, type: "progress" });
+                }
             }
-        }
 
-        return collected;
-    });
-
-    return { events };
+            return collected;
+        },
+    };
 }
 
 export type { AgentToolEvent, AgentToolEventsApi, AgentToolEventsHandle, AgentToolEventsOptions };

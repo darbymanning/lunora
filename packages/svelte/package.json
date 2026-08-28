@@ -1,15 +1,16 @@
 {
     "name": "@lunora/svelte",
     "version": "1.0.0-alpha.94",
-    "description": "Svelte adapter for Lunora — live stores, optimistic mutations, and reactive loaders",
+    "description": "Svelte 5 adapter for Lunora — runes-native live queries, optimistic mutations, and reactive loaders",
     "keywords": [
         "cloudflare",
         "durable-objects",
         "lunora",
         "optimistic-updates",
         "realtime",
-        "stores",
+        "runes",
         "svelte",
+        "svelte-5",
         "workers"
     ],
     "homepage": "https://lunora.sh",
@@ -85,7 +86,7 @@
         "vitest": "catalog:test"
     },
     "peerDependencies": {
-        "svelte": "^5.0.0"
+        "svelte": "^5.40.0"
     },
     "peerDependenciesMeta": {
         "svelte": {
